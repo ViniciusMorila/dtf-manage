@@ -1,0 +1,29 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.spec
+build/
+dist/
+.build_check/
+backups/
+.idea/
+.vscode/
+
+# Dados locais e operações do usuário
+*.db
+*.db-shm
+*.db-wal
+active_operation*.json
+art_link_memory.json
+production_batch_history.json
+
+# Credenciais e configuração local
+.env
+.env.*
+credentials*.json
+service-account*.json
+
+# Arquivos temporários e logs
+*.tmp
+*.log
