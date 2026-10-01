@@ -742,10 +742,14 @@ class MainWindow(QMainWindow):
 
 
 def run_application() -> int:
+    from dtf_manager.core.application_controller import ApplicationController
+
     app = QApplication.instance() or QApplication([])
+    QCoreApplication.setOrganizationName("DTF Manager")
+    QCoreApplication.setApplicationName("DTF Manager")
     app.setStyle("Fusion")
     app.setStyleSheet(APP_STYLE)
     app.setFont(QFont("Segoe UI", 10))
-    window = MainWindow()
-    window.showMaximized()
+    controller = ApplicationController(app)
+    controller.start()
     return app.exec()
