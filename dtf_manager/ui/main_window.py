@@ -1,3 +1,4 @@
+from dtf_manager.core import auth_timing
 from dataclasses import replace
 from pathlib import Path
 import sys
@@ -6,7 +7,7 @@ from uuid import uuid4
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from PySide6.QtCore import QCoreApplication, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QFont
 from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget
 
@@ -48,6 +49,8 @@ from dtf_manager.ui.widgets.existing_operation_dialog import ExistingOperationDi
 
 
 class MainWindow(QMainWindow):
+    logout_requested = Signal()
+
     def __init__(self):
         super().__init__()
         QCoreApplication.setOrganizationName("DTF Manager")
@@ -69,7 +72,12 @@ class MainWindow(QMainWindow):
         self._is_auto_linking = False
         self._is_building_order = False
         self._return_to_production_review = False
-        self._build_ui()
+        with auth_timing.span("main_build_ui"):
+            self._build_ui()
+        self._authentication_logout = False
+        self.logout_button = QPushButton("Sair da conta")
+        self.logout_button.clicked.connect(self.logout_requested)
+        self.statusBar().addPermanentWidget(self.logout_button)
         self.order_import_state.changed.connect(self._checkpoint_current_operation)
         self._refresh_active_operation_card()
         if self.link_memory_repository.load_warning:
@@ -508,13 +516,32 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if (
-            hasattr(self, "manual_linking_page")
+            not getattr(self, "_authentication_logout", False)
+            and hasattr(self, "manual_linking_page")
             and self.pages.currentWidget() is self.manual_linking_page
             and not self.manual_linking_page.confirm_can_leave()
         ):
             event.ignore()
             return
         super().closeEvent(event)
+
+    def prepare_logout(self) -> bool:
+        """Honor existing work guards before requesting remote revocation."""
+        if self._export_timer.isActive():
+            QMessageBox.information(self, "Sair da conta", "Aguarde a exportação terminar antes de sair da conta.")
+            return False
+        if self._is_importing_orders or self._is_auto_linking or self._is_building_order:
+            QMessageBox.information(self, "Sair da conta", "Aguarde a operação atual terminar antes de sair da conta.")
+            return False
+        if (self.pages.currentWidget() is self.manual_linking_page
+                and not self.manual_linking_page.confirm_can_leave()):
+            return False
+        self._authentication_logout = True
+        return True
+
+    def cancel_logout(self):
+        self._authentication_logout = False
+
 
     def _update_roll_settings(self, artwork: ArtworkPanel, width_mm: float, gap_mm: float, cost: float) -> None:
         self.roll_view.set_roll_settings(width_mm, gap_mm)
@@ -742,14 +769,6 @@ class MainWindow(QMainWindow):
 
 
 def run_application() -> int:
-    from dtf_manager.core.application_controller import ApplicationController
-
-    app = QApplication.instance() or QApplication([])
-    QCoreApplication.setOrganizationName("DTF Manager")
-    QCoreApplication.setApplicationName("DTF Manager")
-    app.setStyle("Fusion")
-    app.setStyleSheet(APP_STYLE)
-    app.setFont(QFont("Segoe UI", 10))
-    controller = ApplicationController(app)
-    controller.start()
-    return app.exec()
+    # Preserve the existing public entrypoint without duplicating bootstrap.
+    from dtf_manager.core.bootstrap import run_application as bootstrap_application
+    return bootstrap_application()

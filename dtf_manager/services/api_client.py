@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 import json
 from typing import Callable
+from dtf_manager.core import auth_timing
 
 from PySide6.QtCore import QObject, QTimer, QUrl
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
@@ -15,6 +16,7 @@ class ApiResult:
     status: int = 0
     data: dict | None = None
     error: str | None = None
+    error_code: str | None = None
 
 
 class ApiClient(QObject):
@@ -38,8 +40,17 @@ class ApiClient(QObject):
         request.setAttribute(QNetworkRequest.Attribute.RedirectPolicyAttribute,
                              QNetworkRequest.RedirectPolicy.ManualRedirectPolicy)
         request.setTransferTimeout(self._timeout_ms)
+        request.setAttribute(QNetworkRequest.Attribute.CookieLoadControlAttribute,
+                             QNetworkRequest.LoadControl.Manual)
+        request.setAttribute(QNetworkRequest.Attribute.CookieSaveControlAttribute,
+                             QNetworkRequest.LoadControl.Manual)
         if access_token:
             request.setRawHeader(b"Authorization", ("Bearer " + access_token).encode("utf-8"))
+        timing_stage = {"/auth/login": "login_http", "/auth/refresh": "refresh_http",
+                        "/license/status": "license_http"}.get(path)
+        if path == "/auth/login":
+            auth_timing.login_dispatch()
+        http_started = auth_timing.start_clock()
         reply = (self._manager.post(request, json.dumps(payload).encode("utf-8"))
                  if method == "POST" else self._manager.get(request))
         self._pending.add(reply)
@@ -52,6 +63,8 @@ class ApiClient(QObject):
             reply.abort()
 
         def finished():
+            if timing_stage:
+                auth_timing.emit(timing_stage, http_started)
             timer.stop()
             self._pending.discard(reply)
             try:
@@ -62,7 +75,17 @@ class ApiClient(QObject):
                                     and 200 <= status < 300):
                     result = ApiResult(status, error="network")
                 elif not 200 <= status < 300:
-                    result = ApiResult(status, error="http")
+                    code = None
+                    try:
+                        body = json.loads(bytes(reply.readAll()))
+                        error_body = body.get("error") if isinstance(body, dict) else None
+                        candidate = error_body.get("code") if isinstance(error_body, dict) else None
+                        if (isinstance(candidate, str) and len(candidate) <= 80
+                                and candidate.replace("_", "").isalnum()):
+                            code = candidate
+                    except (ValueError, UnicodeError):
+                        pass
+                    result = ApiResult(status, error="http", error_code=code)
                 else:
                     try:
                         data = json.loads(bytes(reply.readAll()))

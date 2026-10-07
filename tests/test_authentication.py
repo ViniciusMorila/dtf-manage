@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 from dtf_manager.core.application_controller import ApplicationController
 from dtf_manager.services.api_client import ApiClient, ApiResult, BASE_URL
 from dtf_manager.services.auth_service import AuthService
+from tests.session_fakes import FakeSessionStorage
 
 
 TOKENS = {"access_token": "private-access", "refresh_token": "private-refresh",
@@ -90,7 +91,8 @@ class AuthenticationTests(unittest.TestCase):
         self.window = QWidget()
         self.factory = Mock(return_value=self.window)
         self.controller = ApplicationController(self.app, client=self.client,
-                                                main_window_factory=self.factory)
+                                                main_window_factory=self.factory,
+                                                storage=FakeSessionStorage())
         self.addCleanup(self.dispose)
 
     def dispose(self):
@@ -334,13 +336,15 @@ class BootstrapTests(unittest.TestCase):
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 from dtf_manager.core.application_controller import ApplicationController
+from tests.session_fakes import FakeSessionStorage
 class Client:
     def cancel_all(self): pass
     def post_json(self, *args): raise AssertionError('Unexpected HTTP')
     def get(self, *args, **kwargs): raise AssertionError('Unexpected HTTP')
 def forbidden_main(): raise AssertionError('Unexpected MainWindow')
 app = QApplication([])
-controller = ApplicationController(app, client=Client(), main_window_factory=forbidden_main)
+controller = ApplicationController(app, client=Client(), main_window_factory=forbidden_main,
+                                   storage=FakeSessionStorage())
 controller.start()
 QTimer.singleShot(20, controller.login_window.close)
 result = app.exec()

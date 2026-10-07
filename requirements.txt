@@ -6,3 +6,4 @@ gspread>=6.0
 google-auth>=2.0
 watchdog>=4.0
 pyinstaller>=6.0
+pywin32-ctypes>=0.2.3,<0.3; sys_platform == "win32"

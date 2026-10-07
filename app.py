@@ -6,7 +6,10 @@ import time
 
 
 def _run_application() -> int:
-    from dtf_manager.ui.main_window import run_application
+    from dtf_manager.core import auth_timing
+    auth_timing.start_application()
+    with auth_timing.span("bootstrap_ui_import"):
+        from dtf_manager.core.bootstrap import run_application
 
     return run_application()
 
