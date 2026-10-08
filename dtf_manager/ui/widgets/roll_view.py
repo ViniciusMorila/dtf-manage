@@ -3,6 +3,7 @@ from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QTransform
 from PySide6.QtWidgets import QFrame, QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QPushButton
 
 from dtf_manager.ui.styles import ROLL_OUTLINE_COLOR
+from dtf_manager.ui.widgets.artwork_item import ArtworkItem
 
 
 class RollView(QGraphicsView):
@@ -118,7 +119,7 @@ class RollView(QGraphicsView):
             pixmap = recolored
         items = self._artwork_items.setdefault(file_path, [])
         for _ in range(max(1, quantity)):
-            item = QGraphicsPixmapItem(pixmap)
+            item = ArtworkItem(pixmap)
             item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
             item.setShapeMode(QGraphicsPixmapItem.ShapeMode.BoundingRectShape)
             item.setTransform(self._physical_transform(pixmap, width_mm, height_mm))
@@ -145,7 +146,7 @@ class RollView(QGraphicsView):
             pixmap = items[0].pixmap()
             rotation = int(items[0].data(0) or 0)
             for _ in range(quantity - len(items)):
-                item = QGraphicsPixmapItem(pixmap)
+                item = ArtworkItem(pixmap)
                 item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
                 item.setShapeMode(QGraphicsPixmapItem.ShapeMode.BoundingRectShape)
                 item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)

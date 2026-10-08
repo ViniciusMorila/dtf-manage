@@ -4,8 +4,10 @@ import re
 
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QImage, QPainter
+from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene
 
 from dtf_manager.core.constants import DOWNLOADS_PATH
+from dtf_manager.ui.widgets.artwork_item import ArtworkItem
 
 
 class ExportService:
@@ -31,13 +33,14 @@ class ExportService:
         part_count = max(1, math.ceil(height_mm / split_height_mm))
         safe_output_name = self._safe_file_name(output_name)
         DOWNLOADS_PATH.mkdir(parents=True, exist_ok=True)
+        print_scene = self._artwork_scene(scene)
         output_paths = []
         for part_index in range(part_count):
             source_y = part_index * split_height_mm
             part_height_mm = min(split_height_mm, height_mm - source_y)
             output_paths.append(
                 self._export_part(
-                    scene,
+                    print_scene,
                     width_mm,
                     part_height_mm,
                     source_y,
@@ -48,6 +51,24 @@ class ExportService:
                 )
             )
         return output_paths
+
+    @staticmethod
+    def _artwork_scene(scene):
+        """Copy printable pixels/geometry, never editor guides or selection state."""
+        result = QGraphicsScene()
+        result.setSceneRect(scene.sceneRect())
+        for item in scene.items(Qt.SortOrder.AscendingOrder):
+            if not isinstance(item, ArtworkItem) or not item.isVisible():
+                continue
+            copy = QGraphicsPixmapItem(item.pixmap())
+            copy.setOffset(item.offset())
+            copy.setTransform(item.sceneTransform())
+            copy.setOpacity(item.effectiveOpacity())
+            copy.setZValue(item.zValue())
+            copy.setTransformationMode(item.transformationMode())
+            copy.setShapeMode(item.shapeMode())
+            result.addItem(copy)
+        return result
 
     def _export_part(
         self,
@@ -79,8 +100,10 @@ class ExportService:
         )
         source_rect = QRectF(0, source_y_mm, width_mm, height_mm)
         target_rect = QRectF(0, 0, image.width(), image.height())
-        scene.render(painter, target_rect, source_rect, Qt.AspectRatioMode.IgnoreAspectRatio)
-        painter.end()
+        try:
+            scene.render(painter, target_rect, source_rect, Qt.AspectRatioMode.IgnoreAspectRatio)
+        finally:
+            painter.end()
         file_name = (
             f"{output_name}.png"
             if part_count == 1

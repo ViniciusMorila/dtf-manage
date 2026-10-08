@@ -751,7 +751,7 @@ class MainWindow(QMainWindow):
                 self._output_paths = self.export_service.export_roll(
                     self.roll_view.scene(),
                     width_mm,
-                    self.roll_view.scene().sceneRect().height(),
+                    self.roll_view.sceneRect().height(),
                     300,
                     max_length_m,
                     self._export_file_name,
