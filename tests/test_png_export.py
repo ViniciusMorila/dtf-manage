@@ -112,11 +112,12 @@ class PngExportTests(unittest.TestCase):
         paths = self.export(height=10, split=0.005)
         self.assertEqual(len(paths), 2)
         images = [QImage(str(path)) for path in paths]
-        self.assertTrue(all((image.width(), image.height()) == (200, 50) for image in images))
+        self.assertEqual([(image.width(), image.height()) for image in images],
+                         [(200, 72), (200, 28)])
         self.assertEqual(images[0].pixelColor(25, 15), QColor("#3366ee"))
         self.assertEqual(images[0].pixelColor(15, 15).alpha(), 0)
-        self.assertEqual(images[1].pixelColor(25, 5), QColor("#3366ee"))
-        self.assertEqual(images[1].pixelColor(25, 30).alpha(), 0)
+        self.assertEqual(images[0].pixelColor(25, 68), QColor("#3366ee"))
+        self.assertEqual(images[1].pixelColor(25, 5).alpha(), 0)
 
     def test_rotated_scaled_artwork_opacity_and_position_are_preserved(self):
         art = self.view._artwork_items[str(self.source)][0]
@@ -204,10 +205,40 @@ class PngExportTests(unittest.TestCase):
         self.assertGreaterEqual(self.view.scene().sceneRect().height(), 30)
         images = [QImage(str(path)) for path in self.export_via_main_window(split=0.005)]
         self.assertEqual([image.height() for image in images],
-                         [round(mm * 300 / 25.4) for mm in (5, 5, 2)])
+                         [round(12 * 300 / 25.4)])
         for image in images:
             self.assertEqual(image.pixelColor(10, image.height() - 1), QColor("#3366ee"))
             self.assertEqual(image.pixelColor(image.width() - 1, 0).alpha(), 0)
+
+    def test_safe_cut_extends_three_metres_to_art_end_with_clearance(self):
+        scene = QGraphicsScene()
+        art = ArtworkItem(QPixmap(str(self.source)))
+        art.setTransform(QTransform().scale(1, 100))
+        art.setPos(0, 2500)
+        scene.addItem(art)
+        self.assertEqual(self.exporter._split_ranges(scene, 7000, 3000),
+                         [(0, 3500.2), (3500.2, 3000.0), (6500.2, 499.8000000000002)])
+
+    def test_safe_cut_rechecks_other_columns_and_ignores_overlays(self):
+        scene = QGraphicsScene()
+        for x, top, bottom in ((0, 4, 7), (12, 7.1, 9)):
+            art = ArtworkItem(QPixmap(str(self.source)))
+            art.setTransform(QTransform().scale(0.4, (bottom - top) / 10))
+            art.setPos(x, top)
+            scene.addItem(art)
+        scene.addRect(0, 0, 20, 30)
+        parts = self.exporter._split_ranges(scene, 20, 5)
+        self.assertAlmostEqual(parts[0][1], 9.2)
+        self.assertAlmostEqual(sum(length for _, length in parts), 20)
+
+    def test_safe_cut_keeps_target_in_empty_gap_and_at_art_start(self):
+        scene = QGraphicsScene()
+        art = ArtworkItem(QPixmap(str(self.source)))
+        art.setTransform(QTransform().scale(0.4, 0.2))
+        art.setPos(0, 5)
+        scene.addItem(art)
+        self.assertEqual(self.exporter._split_ranges(scene, 15, 5),
+                         [(0, 5), (5, 5), (10, 5)])
 
     def test_manual_position_length_is_used_for_export(self):
         self.view.set_roll_settings(20, 0)

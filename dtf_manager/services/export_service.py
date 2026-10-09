@@ -1,5 +1,4 @@
 from pathlib import Path
-import math
 import re
 
 from PySide6.QtCore import QRectF, Qt
@@ -30,14 +29,13 @@ class ExportService:
             if max_length_m is not None and max_length_m > 0
             else height_mm
         )
-        part_count = max(1, math.ceil(height_mm / split_height_mm))
+        parts = self._split_ranges(scene, height_mm, split_height_mm)
+        part_count = len(parts)
         safe_output_name = self._safe_file_name(output_name)
         DOWNLOADS_PATH.mkdir(parents=True, exist_ok=True)
         print_scene = self._artwork_scene(scene)
         output_paths = []
-        for part_index in range(part_count):
-            source_y = part_index * split_height_mm
-            part_height_mm = min(split_height_mm, height_mm - source_y)
+        for part_index, (source_y, part_height_mm) in enumerate(parts):
             output_paths.append(
                 self._export_part(
                     print_scene,
@@ -51,6 +49,34 @@ class ExportService:
                 )
             )
         return output_paths
+
+    @staticmethod
+    def _split_ranges(scene, height_mm, target_mm):
+        """Advance cuts past printable art, including 0.2 mm of clearance.
+
+        The target is measured from each actual cut. Chained artwork across
+        columns can require a longer part; geometry and the roll stay intact.
+        """
+        intervals = []
+        for item in scene.items():
+            if not isinstance(item, ArtworkItem) or not item.isVisible():
+                continue
+            bounds = item.mapRectToScene(QRectF(
+                item.offset(), item.pixmap().deviceIndependentSize()))
+            intervals.append((bounds.top(), bounds.bottom()))
+        intervals.sort()
+        parts = []
+        start = 0.0
+        while start < height_mm:
+            end = min(start + target_mm, height_mm)
+            for top, bottom in intervals:
+                if top >= end or end >= height_mm:
+                    break
+                if bottom + 0.2 > end:
+                    end = min(height_mm, bottom + 0.2)
+            parts.append((start, end - start))
+            start = end
+        return parts
 
     @staticmethod
     def _artwork_scene(scene):
