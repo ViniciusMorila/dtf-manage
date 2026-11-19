@@ -1,0 +1,37 @@
+# -*- mode: python ; coding: utf-8 -*-
+# PyInstaller spec for DTF Manager (one-folder build). Use build.ps1 at the repo root.
+# It produces dist/DTFManager/DTFManager.exe. No installer is generated.
+from pathlib import Path
+
+ROOT = Path(SPECPATH).resolve().parent
+
+a = Analysis(
+    [str(ROOT / "app.py")],
+    pathex=[str(ROOT)],
+    binaries=[],
+    datas=[],
+    # win32ctypes backends are loaded dynamically; the PyInstaller hook also collects them.
+    hiddenimports=["win32ctypes.pywin32.win32cred"],
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=[
+        # Development-only or unused by the application code.
+        "watchdog", "gspread", "google", "tkinter", "matplotlib", "IPython", "pytest",
+        "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtPdf",
+        "PySide6.QtPdfWidgets", "PySide6.Qt3DCore", "PySide6.QtQuick", "PySide6.QtQml",
+    ],
+    noarchive=False,
+)
+pyz = PYZ(a.pure)
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name="DTFManager",
+    debug=False,
+    strip=False,
+    upx=False,
+    console=False,
+)
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="DTFManager")

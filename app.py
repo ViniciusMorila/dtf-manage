@@ -69,6 +69,12 @@ def _run_with_auto_reload(*, development_no_auth=False) -> int:
 
 
 if __name__ == "__main__":
+    if "--self-check" in sys.argv:
+        # Headless verification of SMBIOS and DPAPI (also used on the frozen build).
+        index = sys.argv.index("--self-check")
+        report_path = sys.argv[index + 1] if len(sys.argv) > index + 1 else "dtf_self_check.json"
+        from dtf_manager.core import self_check
+        raise SystemExit(self_check.run(report_path))
     # Reloading is a development-only opt-in. The normal application process
     # must never restart because importing a spreadsheet dependency touched a
     # file monitored by Windows/OneDrive.
