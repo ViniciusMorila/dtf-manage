@@ -69,6 +69,14 @@ def _run_with_auto_reload(*, development_no_auth=False) -> int:
 
 
 if __name__ == "__main__":
+    if "--release-check" in sys.argv:
+        # Build gate: the packaged configuration must hold real values.
+        from dtf_manager.core.release_check import release_problems
+        problems = release_problems()
+        sys.stderr.reconfigure(encoding="utf-8")   # same bytes for pipes and consoles
+        for problem in problems:
+            print("RELEASE BLOQUEADO: " + problem, file=sys.stderr)
+        raise SystemExit(1 if problems else 0)
     if "--self-check" in sys.argv:
         # Headless verification of SMBIOS and DPAPI (also used on the frozen build).
         index = sys.argv.index("--self-check")

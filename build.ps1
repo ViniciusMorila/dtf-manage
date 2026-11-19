@@ -44,6 +44,19 @@ if ($RunTests) {
     Remove-Item Env:QT_QPA_PLATFORM
 }
 
+# Release gate (fails fast, before building): the packaged configuration must be real.
+$gateFile = Join-Path ([System.IO.Path]::GetTempPath()) "dtf_release_gate.txt"
+$env:PYTHONIOENCODING = "utf-8"
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $Python app.py --release-check 2> $gateFile
+$gateExit = $LASTEXITCODE
+$ErrorActionPreference = $previousPreference
+if ($gateExit -ne 0) {
+    Get-Content $gateFile -Encoding UTF8 | ForEach-Object { Write-Host "$_" -ForegroundColor Red }
+    throw "Build abortado: corrija dtf_manager\data\app_config.json e dtf_manager\data\planos.json (veja as mensagens acima)."
+}
+
 & $Python -m PyInstaller --noconfirm --clean --distpath dist --workpath build\_work build\dtf_manager.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
@@ -56,6 +69,10 @@ if (Test-Path $report) { Remove-Item $report }
 $process = Start-Process -FilePath $exe -ArgumentList "--self-check", "`"$report`"" -Wait -PassThru
 if (-not (Test-Path $report)) { throw "Self-check produced no report (exit code $($process.ExitCode))" }
 Get-Content $report
-if ($process.ExitCode -ne 0) { throw "Self-check failed in the packaged build" }
+if ($process.ExitCode -ne 0) {
+    $problems = (Get-Content $report -Raw | ConvertFrom-Json).release_problems
+    foreach ($problem in $problems) { Write-Host "RELEASE BLOQUEADO: $problem" -ForegroundColor Red }
+    throw "Self-check failed in the packaged build"
+}
 
 Write-Host "Build OK: $exe"

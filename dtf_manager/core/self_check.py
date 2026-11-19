@@ -43,7 +43,31 @@ def collect():
         result["plans_loaded"] = len(load_plans())
     except Exception as error:
         result["plans_error"] = type(error).__name__
+    try:
+        import os
+        from dtf_manager.core import config
+        from dtf_manager.core.release_check import release_problems
+        result["release_problems"] = release_problems()
+        # The packaged number must be readable without any environment override.
+        saved = {k: os.environ.pop(k) for k in ("DTF_WHATSAPP_NUMBER", "DTF_SUPPORT_CONTACT")
+                 if k in os.environ}
+        try:
+            packaged = config._app_config()
+            result["packaged_whatsapp_read_without_env"] = bool(
+                config.whatsapp_number()
+                and config.whatsapp_number() == config.text_field(packaged, "whatsapp_numero"))
+            result["packaged_support_read_without_env"] = bool(
+                config.support_contact()
+                and config.support_contact() == config.text_field(packaged, "contato_suporte")[:120])
+        finally:
+            os.environ.update(saved)
+    except Exception as error:
+        result["release_error"] = type(error).__name__
+        result["release_problems"] = ["Não foi possível verificar a configuração de release."]
     result["ok"] = bool(
+        not result.get("release_problems", ["erro"]) and
+        result.get("packaged_whatsapp_read_without_env") and
+        result.get("packaged_support_read_without_env") and
         result.get("plans_loaded", 0) >= 1 and
         result.get("machine_id_is_sha256_hex") and result.get("machine_id_stable")
         and len(result.get("machine_components", [])) >= 2
