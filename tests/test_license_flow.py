@@ -25,6 +25,7 @@ CONTROLLER = "dtf_manager.core.application_controller.QMessageBox"
 class FakeMain(QWidget):
     logout_requested = Signal()
     renew_requested = Signal()
+    subscribe_requested = Signal()
     plans_requested = Signal()
 
     def __init__(self):
@@ -41,6 +42,9 @@ class FakeMain(QWidget):
 
     def prepare_logout(self):
         return True
+
+    def set_payment_site(self, available):
+        self.payment_site = available
 
 
 class LicenseFlowBase(unittest.TestCase):
@@ -252,9 +256,20 @@ class ActivationTests(LicenseFlowBase):
         self.assertFalse(window.session_mode)
         self.assertEqual(window.email.text(), "user@example.com")
         self.assertIn("expirou", window.message.text())
-        window.plans.click()
-        self.opener.assert_called_once_with(config.DEFAULT_PAYMENT_URL)
+        self.assertFalse(window.plans.isVisibleTo(window))    # DTF_PAYMENT_URL not configured
+        window.subscribe.click()
+        self.assertTrue(self.controller._subscribe_window.isVisible())
+        self.assertFalse(window.isVisible())
+        self.opener.assert_not_called()                      # choosing a plan is what opens WhatsApp
         self.factory.assert_not_called()
+
+    def test_payment_site_is_a_secondary_option_only_when_configured(self):
+        with patch.dict(os.environ, {"DTF_PAYMENT_URL": "https://pay.example.com/x"}):
+            self.expired_login()
+            window = self.controller.activation_window
+            self.assertTrue(window.plans.isVisibleTo(window))
+            window.plans.click()
+        self.opener.assert_called_once_with("https://pay.example.com/x")
 
     def test_account_without_license_also_asks_for_a_key(self):
         self.storage.token = None
@@ -384,10 +399,13 @@ class ActivationTests(LicenseFlowBase):
         self.controller.activation_window.close()
         self.assertFalse(self.controller._stopped)
 
-    def test_plans_menu_action_opens_the_payment_link(self):
+    def test_site_menu_action_opens_the_payment_link_only_when_configured(self):
         self.sign_in()
         self.main.plans_requested.emit()
-        self.opener.assert_called_once_with(config.DEFAULT_PAYMENT_URL)
+        self.opener.assert_not_called()
+        with patch.dict(os.environ, {"DTF_PAYMENT_URL": "https://pay.example.com/x"}):
+            self.main.plans_requested.emit()
+        self.opener.assert_called_once_with("https://pay.example.com/x")
 
 
 class PeriodicValidationTests(LicenseFlowBase):

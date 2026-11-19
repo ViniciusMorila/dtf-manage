@@ -116,7 +116,7 @@ def dispose_controller(app, controller, *windows):
     controller.stop()
     controller._transitioning = True
     for window in (controller._login_window, controller._register_window,
-                   controller._activation_window):
+                   controller._activation_window, controller._subscribe_window):
         if window is not None:
             window.close()
             window.deleteLater()

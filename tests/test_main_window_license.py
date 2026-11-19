@@ -103,14 +103,21 @@ class MainWindowLicenseTests(unittest.TestCase):
     def test_account_menu_has_renewal_and_plans_that_reach_the_controller(self):
         received = []
         self.window.renew_requested.connect(lambda: received.append("renew"))
-        self.window.plans_requested.connect(lambda: received.append("plans"))
+        self.window.subscribe_requested.connect(lambda: received.append("subscribe"))
+        self.window.plans_requested.connect(lambda: received.append("site"))
+        self.window.subscribe_action.trigger()
         self.window.renew_action.trigger()
         self.window.plans_action.trigger()
         self.window.set_license_state(info(plano="TESTE", dias_restantes=3))
+        self.assertEqual(self.window.renew_button.text(), "Assinar")
         self.window.renew_button.click()
-        self.assertEqual(received, ["renew", "plans", "renew"])
+        self.assertEqual(received, ["subscribe", "renew", "site", "subscribe"])
         self.assertEqual([a.text() for a in self.window.account_button.menu().actions()],
-                         ["Renovar licença (inserir chave)...", "Ver planos..."])
+                         ["Assinar...", "Renovar licença (inserir chave)...", "Ver planos no site..."])
+        self.assertFalse(self.window.plans_action.isVisible())
+        self.window.set_payment_site(True)
+        self.assertTrue(self.window.plans_action.isVisible())
+        self.window.set_payment_site(False)
 
     def test_license_widgets_use_only_theme_object_names(self):
         self.assertEqual(self.label().objectName(), "licenseLabel")
