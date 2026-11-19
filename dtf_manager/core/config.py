@@ -8,8 +8,6 @@ import os
 from urllib.parse import urlsplit
 
 DEFAULT_API_URL = "https://dtf-manager-api-production.up.railway.app"
-# Example value. Replace it with the real payment page through DTF_PAYMENT_URL.
-DEFAULT_PAYMENT_URL = "https://example.com/dtf-manager/planos"
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -46,11 +44,29 @@ def environment_name(base_url=None):
 
 
 def payment_url():
-    value = os.environ.get("DTF_PAYMENT_URL", "").strip() or DEFAULT_PAYMENT_URL
+    """Optional secondary purchase page (DTF_PAYMENT_URL); None when not configured."""
+    value = os.environ.get("DTF_PAYMENT_URL", "").strip()
+    if not value:
+        return None
     try:
         return _validated_url(value, "DTF_PAYMENT_URL", allow_loopback_http=False)
     except ConfigError:
-        return DEFAULT_PAYMENT_URL
+        return None
+
+
+def whatsapp_number():
+    """Seller WhatsApp (DTF_WHATSAPP_NUMBER): international format, digits only.
+
+    Example: 5511999999999. Returns None when missing or malformed, so the app
+    shows a warning instead of opening a broken link. There is no built-in default.
+    """
+    value = os.environ.get("DTF_WHATSAPP_NUMBER", "").strip()
+    return value if value.isascii() and value.isdigit() and 10 <= len(value) <= 15 else None
+
+
+def plans_file_override():
+    value = os.environ.get("DTF_PLANS_FILE", "").strip()
+    return value or None
 
 
 def support_contact():

@@ -143,13 +143,13 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaises(config.ConfigError):
                     config.api_base_url()
 
-    def test_payment_url_has_example_default_and_rejects_non_https(self):
+    def test_payment_url_is_optional_and_https_only(self):
         with patch.dict("os.environ", {}, clear=True):
-            self.assertEqual(config.payment_url(), config.DEFAULT_PAYMENT_URL)
+            self.assertIsNone(config.payment_url())
         with patch.dict("os.environ", {"DTF_PAYMENT_URL": "https://pay.example.com/x"}, clear=True):
             self.assertEqual(config.payment_url(), "https://pay.example.com/x")
         with patch.dict("os.environ", {"DTF_PAYMENT_URL": "javascript:alert(1)"}, clear=True):
-            self.assertEqual(config.payment_url(), config.DEFAULT_PAYMENT_URL)
+            self.assertIsNone(config.payment_url())
 
     def test_no_auth_requires_explicit_variable(self):
         with patch.dict("os.environ", {}, clear=True):

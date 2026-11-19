@@ -133,6 +133,19 @@ class OfflineGraceTests(unittest.TestCase):
         self.assertEqual(self.grace.evaluate().reason, "no_cache")
         self.assertEqual(self.store.deletions, 1)
 
+    def test_contact_is_remembered_merged_and_survives_revalidation(self):
+        self.grace.record_success(status(), {"email": "a@b.com", "name": "Ana"})
+        self.assertEqual(self.grace.contact(), {"email": "a@b.com", "name": "Ana"})
+        self.grace.record_success(status(), {"phone": "11912345678", "name": ""})
+        self.assertEqual(self.grace.contact(), {"email": "a@b.com", "name": "Ana", "phone": "11912345678"})
+        self.grace.record_success(status())
+        self.assertEqual(self.grace.contact()["email"], "a@b.com")
+        self.clock.advance(hours=1)
+        self.assertTrue(self.grace.evaluate().allowed)           # high-water update keeps it
+        self.assertEqual(self.grace.contact()["name"], "Ana")
+        self.grace.clear()
+        self.assertEqual(self.grace.contact(), {})
+
     def test_grace_period_constant_is_72_hours(self):
         self.assertEqual(GRACE_PERIOD, timedelta(hours=72))
 
@@ -183,6 +196,12 @@ class LicenseStoreTests(unittest.TestCase):
         self.assertIsNone(self.store().load())
         self.path.write_bytes(b"")
         self.assertIsNone(self.store().load())
+
+    def test_contact_round_trips_and_unknown_keys_are_dropped(self):
+        snap = LicenseSnapshot(status().info, format_timestamp(T0), format_timestamp(T0),
+                               format_timestamp(T0), {"email": "a@b.com", "senha": "x"})
+        self.store().save(snap)
+        self.assertEqual(self.store().load().contact, {"email": "a@b.com"})
 
     def test_machine_id_provider_may_be_callable(self):
         store = LicenseStore(lambda: MACHINE, path=self.path, protector=ReversibleProtector())

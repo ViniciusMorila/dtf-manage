@@ -5,7 +5,7 @@ grace period. It NEVER authorizes use by itself outside that grace period. The
 machine id is the DPAPI optional entropy, so a copied cache file is useless on
 another computer or user profile.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -27,6 +27,7 @@ class LicenseSnapshot:
     server_now: str       # servidor_agora of the last successful validation
     validated_at: str     # local UTC clock at that validation
     high_water: str       # highest local UTC clock ever observed by the app
+    contact: dict = field(default_factory=dict)   # optional name/email/phone for the WhatsApp message
 
 
 class DpapiProtector:
@@ -99,7 +100,7 @@ class LicenseStore:
         payload = json.dumps({
             "v": CACHE_VERSION, "license": snapshot.info.to_dict(),
             "server_now": snapshot.server_now, "validated_at": snapshot.validated_at,
-            "high_water": snapshot.high_water,
+            "high_water": snapshot.high_water, "contact": snapshot.contact,
         }, separators=(",", ":")).encode("utf-8")
         try:
             blob = self._protector.protect(payload, self._entropy())
@@ -124,8 +125,11 @@ class LicenseStore:
         try:
             data = json.loads(self._protector.unprotect(blob, self._entropy()))
             info = LicenseInfo.from_dict(data["license"])
+            contact = data.get("contact")
+            contact = {k: v[:254] for k, v in contact.items()
+                       if k in {"name", "email", "phone"} and isinstance(v, str)}                 if isinstance(contact, dict) else {}
             snapshot = LicenseSnapshot(info, data["server_now"], data["validated_at"],
-                                       data["high_water"])
+                                       data["high_water"], contact)
             if (data.get("v") != CACHE_VERSION or info is None
                     or any(parse_timestamp(v) is None for v in
                            (snapshot.server_now, snapshot.validated_at, snapshot.high_water))):

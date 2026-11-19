@@ -38,17 +38,25 @@ class OfflineGrace:
         self._monotonic = monotonic
         self._anchor = None   # (local wall clock, monotonic) of the last validation in this process
 
-    def record_success(self, status: LicenseStatus):
+    def contact(self):
+        """Name/e-mail/phone remembered with the cached license (may be empty)."""
+        snapshot = self._load()
+        return dict(snapshot.contact) if snapshot is not None else {}
+
+    def record_success(self, status: LicenseStatus, contact=None):
         """Persist a validation the server just confirmed (any HTTP 200)."""
         now = self._clock()
         previous = self._load()
         high = now
+        merged = dict(previous.contact) if previous is not None else {}
+        merged.update({k: v for k, v in (contact or {}).items() if v})
         if previous is not None:
             high = max(now, parse_timestamp(previous.high_water) or now)
         self._anchor = (now, self._monotonic())
         try:
             self.store.save(LicenseSnapshot(status.info, status.server_now,
-                                            format_timestamp(now), format_timestamp(high)))
+                                            format_timestamp(now), format_timestamp(high),
+                                            merged))
         except LicenseStoreError:
             pass  # the server already authorized; only the offline grace is lost
 
@@ -95,7 +103,7 @@ class OfflineGrace:
         try:  # raise the high-water mark so a later rollback is detected across restarts
             if now > high:
                 self.store.save(LicenseSnapshot(info, snapshot.server_now, snapshot.validated_at,
-                                                format_timestamp(now)))
+                                                format_timestamp(now), snapshot.contact))
         except LicenseStoreError:
             pass
         return GraceDecision(True, "ok", GRACE_PERIOD - elapsed, info, snapshot.server_now)
