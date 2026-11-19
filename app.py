@@ -74,6 +74,12 @@ if __name__ == "__main__":
     # file monitored by Windows/OneDrive.
     auto_reload = "--reload" in sys.argv and not getattr(sys, "frozen", False)
     development_no_auth = "--no-auth" in sys.argv and not getattr(sys, "frozen", False)
+    if development_no_auth:
+        from dtf_manager.core import config
+        if not config.no_auth_allowed():
+            print("--no-auth exige a variavel de ambiente DTF_ALLOW_NO_AUTH=1 "
+                  "(uso exclusivo de desenvolvimento).", file=sys.stderr)
+            raise SystemExit(2)
     if auto_reload:
         raise SystemExit(_run_with_auto_reload(development_no_auth=development_no_auth))
     raise SystemExit(_run_application(development_no_auth=development_no_auth))
