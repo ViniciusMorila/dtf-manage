@@ -38,7 +38,13 @@ def collect():
         result["qt_and_credential_manager_imports"] = True
     except Exception as error:
         result["import_error"] = type(error).__name__
+    try:
+        from dtf_manager.services.plans import load_plans
+        result["plans_loaded"] = len(load_plans())
+    except Exception as error:
+        result["plans_error"] = type(error).__name__
     result["ok"] = bool(
+        result.get("plans_loaded", 0) >= 1 and
         result.get("machine_id_is_sha256_hex") and result.get("machine_id_stable")
         and len(result.get("machine_components", [])) >= 2
         and result.get("dpapi_round_trip") and result.get("dpapi_binds_entropy")

@@ -9,7 +9,8 @@ a = Analysis(
     [str(ROOT / "app.py")],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[],
+    # Default plans/prices; users can override with DTF_PLANS_FILE without rebuilding.
+    datas=[(str(ROOT / "dtf_manager" / "data" / "planos.json"), "dtf_manager/data")],
     # win32ctypes backends are loaded dynamically; the PyInstaller hook also collects them.
     hiddenimports=["win32ctypes.pywin32.win32cred"],
     hookspath=[],
