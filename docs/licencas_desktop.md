@@ -139,7 +139,7 @@ Não há pagamento nem chamada à API nessa tela. O fluxo é:
    **Assinar** com Mensal, Semestral, Anual e Vitalício (nome, duração, preço e
    botão **Escolher**). O Anual aparece destacado como "Mais vantajoso", sem
    desconto calculado.
-2. Ao escolher, o app abre `https://wa.me/<DTF_WHATSAPP_NUMBER>?text=<mensagem>`
+2. Ao escolher, o app abre `https://wa.me/<whatsapp_numero>?text=<mensagem>`
    (texto codificado com `urllib.parse.quote`) com
    `QDesktopServices.openUrl`. Mensagem: `Olá! Quero assinar o DTF Manager.
    Plano: Anual (R$ 449,90). Nome: ... E-mail da conta: .... Telefone: ....`
@@ -154,6 +154,46 @@ Não há pagamento nem chamada à API nessa tela. O fluxo é:
 5. O cliente ativa em **Tenho uma chave** (e-mail, senha e chave) ou, com sessão,
    em **Conta → Renovar licença**. A chave é de uso único e a validade é somada à
    atual.
+
+### Configuração embutida no executável (WhatsApp e suporte)
+
+O número de WhatsApp e o contato de suporte **vêm embutidos no executável**, não do
+ambiente do usuário final. Ficam em `dtf_manager/data/app_config.json`, incluído
+no `build\dtf_manager.spec`:
+
+```json
+{ "whatsapp_numero": "5521999998888", "contato_suporte": "suporte@seudominio.com.br" }
+```
+
+- `whatsapp_numero`: formato internacional, **só dígitos**, de 10 a 15 dígitos.
+- `contato_suporte`: texto livre (até 120 caracteres), mostrado nas mensagens que
+  mandam falar com o suporte.
+- Os arquivos aceitam UTF-8 com ou sem BOM (Bloco de Notas inclui o BOM).
+- O repositório traz o valor de exemplo (`5511999999999`) e o contato vazio **de
+  propósito**: o build falha até você preencher. Em tempo de execução o número de
+  exemplo é tratado como "não configurado" (a tela avisa e não abre link).
+- As variáveis `DTF_WHATSAPP_NUMBER` e `DTF_SUPPORT_CONTACT` continuam existindo,
+  mas **só sobrescrevem, para desenvolvimento**. O gate de release ignora o
+  ambiente e verifica o que realmente vai no pacote.
+
+### Bloqueio do build
+
+`.\build.ps1` roda `python app.py --release-check` **antes** do PyInstaller, e o
+`--self-check` do executável congelado repete a verificação. O build falha, com
+a mensagem `RELEASE BLOQUEADO: ...`, se:
+
+| Condição | Mensagem |
+| --- | --- |
+| `whatsapp_numero` vazio | `whatsapp_numero está vazio em app_config.json.` |
+| `whatsapp_numero` malformado (não são só dígitos, ou fora de 10 a 15) | `whatsapp_numero malformado em app_config.json: ...` |
+| `whatsapp_numero` igual ao exemplo `5511999999999` | `whatsapp_numero ainda é o valor de exemplo ...` |
+| `planos.json` com `"exemplo": true` | `planos.json ainda tem "exemplo": true ...` |
+| `contato_suporte` vazio | `contato_suporte está vazio em app_config.json.` |
+| arquivo ausente ou inválido | `app_config.json ausente ou inválido ...` / `planos.json ausente ou inválido.` |
+
+Todas as falhas são listadas de uma vez. O `--self-check` também confirma, no
+executável, que o número e o contato são lidos do arquivo empacotado **sem
+nenhuma variável de ambiente**.
 
 ### Arquivo de planos
 
@@ -171,11 +211,11 @@ real cobrado é combinado por você na conversa, e a duração do plano vem da c
 | Variável | Padrão | Uso |
 | --- | --- | --- |
 | `DTF_API_URL` | `https://dtf-manager-api-production.up.railway.app` | URL da API. Exige `https://`; `http://` só para `localhost`, `127.0.0.1` ou `::1`. Valor inválido impede a abertura com uma mensagem. |
-| `DTF_WHATSAPP_NUMBER` | ausente | Seu WhatsApp para a assinatura: formato internacional, **só dígitos** (ex.: `5511999999999`). Sem ele (ou malformado) a tela "Assinar" avisa e não abre link. Não há valor padrão no código. |
+| `DTF_WHATSAPP_NUMBER` | `whatsapp_numero` de `app_config.json` | **Só sobrescrita para desenvolvimento.** Formato internacional, só dígitos. Valor inválido não cai no do pacote: a tela "Assinar" avisa e não abre link. |
 | `DTF_PLANS_FILE` | `dtf_manager/data/planos.json` | Arquivo de planos e preços alternativo (permite trocar preços sem recompilar). |
 | `DTF_PAYMENT_URL` | ausente | Opcional e secundário: página de compra no site, mostrada como "Ver planos no site". Só `https://`. |
 | `DTF_ALLOW_NO_AUTH` | ausente | Precisa ser `1` para o modo `--no-auth`. |
-| `DTF_SUPPORT_CONTACT` | ausente | Texto opcional (e-mail ou telefone) anexado às mensagens que mandam falar com o suporte. |
+| `DTF_SUPPORT_CONTACT` | `contato_suporte` de `app_config.json` | **Só sobrescrita para desenvolvimento.** Anexado às mensagens que mandam falar com o suporte. |
 | `DTF_AUTH_TIMING` | ausente | `1` liga os tempos de diagnóstico (já existia). |
 
 O alvo da credencial no Credential Manager não depende mais da URL:
@@ -220,7 +260,7 @@ ignorado no executável empacotado, mesmo com a variável.
 .\build.ps1 -RunTests       # roda os testes (um processo por módulo) antes
 ```
 
-O script usa `build\dtf_manager.spec` (versionado), gera uma pasta
+Antes de tudo ele confere a configuração embutida (veja "Bloqueio do build"). O script usa `build\dtf_manager.spec` (versionado), gera uma pasta
 (`one-folder`) e **não cria instalador**. Em seguida executa
 `DTFManager.exe --self-check <arquivo>`, que roda no executável congelado, sem
 janela nem rede, e confirma que SMBIOS por `ctypes`, a leitura do disco, o DPAPI e
