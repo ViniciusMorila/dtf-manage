@@ -26,7 +26,7 @@ builds empacotados), é marcado no título da janela e não deve ser usado para 
 
 - `DTF_API_URL`: URL da API (padrão: produção). Ex.: `http://127.0.0.1:8000`.
 - `DTF_PAYMENT_URL`: página de compra aberta pelo botão "Ver planos e comprar".
-- `.uild.ps1`: gera `dist\DTFManager\DTFManager.exe` (sem instalador).
+- `.\build.ps1`: gera `dist\DTFManager\DTFManager.exe` (sem instalador).
 
 Detalhes, carência offline de 72 horas e ID da máquina em
 [docs/licencas_desktop.md](docs/licencas_desktop.md).
