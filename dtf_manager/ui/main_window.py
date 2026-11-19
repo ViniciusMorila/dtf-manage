@@ -57,7 +57,8 @@ def _days_text(days):
 class MainWindow(QMainWindow):
     logout_requested = Signal()
     renew_requested = Signal()
-    plans_requested = Signal()
+    subscribe_requested = Signal()
+    plans_requested = Signal()   # optional site (DTF_PAYMENT_URL)
 
     def __init__(self):
         super().__init__()
@@ -102,18 +103,24 @@ class MainWindow(QMainWindow):
         self.license_label.setObjectName("licenseLabel")
         self.license_label.setTextFormat(Qt.TextFormat.PlainText)
         self.license_label.hide()
-        self.renew_button = QPushButton("Renovar")
+        self.renew_button = QPushButton("Assinar")
         self.renew_button.hide()
-        self.renew_button.clicked.connect(self.renew_requested)
+        self.renew_button.clicked.connect(self.subscribe_requested)
         self.account_button = QPushButton("Conta")
         menu = QMenu(self.account_button)
+        self.subscribe_action = menu.addAction("Assinar...")
         self.renew_action = menu.addAction("Renovar licença (inserir chave)...")
-        self.plans_action = menu.addAction("Ver planos...")
+        self.plans_action = menu.addAction("Ver planos no site...")
+        self.plans_action.setVisible(False)
+        self.subscribe_action.triggered.connect(self.subscribe_requested)
         self.renew_action.triggered.connect(self.renew_requested)
         self.plans_action.triggered.connect(self.plans_requested)
         self.account_button.setMenu(menu)
         for widget in (self.license_label, self.renew_button, self.account_button):
             self.statusBar().addPermanentWidget(widget)
+
+    def set_payment_site(self, available):
+        self.plans_action.setVisible(available)
 
     def set_license_state(self, info, offline_remaining=None):
         """Show plan and days left. Called by the controller after each validation."""

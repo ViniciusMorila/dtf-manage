@@ -16,7 +16,8 @@ class ActivationWindow(QWidget):
     """
 
     activate_requested = Signal(str, str, str)   # key, e-mail, password ("" in session mode)
-    plans_requested = Signal()
+    subscribe_requested = Signal()
+    plans_requested = Signal()   # optional purchase page (DTF_PAYMENT_URL)
     back_requested = Signal()
     cancel_requested = Signal()
     closed = Signal()
@@ -40,7 +41,11 @@ class ActivationWindow(QWidget):
         plans.setObjectName("muted")
         plans.setWordWrap(True)
         layout.addWidget(plans)
-        self.plans = QPushButton("Ver planos e comprar")
+        self.subscribe = QPushButton("Assinar")
+        self.subscribe.setObjectName("primaryButton")
+        layout.addWidget(self.subscribe)
+        self.plans = QPushButton("Ver planos no site")
+        self.plans.hide()
         layout.addWidget(self.plans)
         card = QFrame()
         card.setObjectName("sidebar")
@@ -75,6 +80,7 @@ class ActivationWindow(QWidget):
         for field in (self.email, self.password, self.key):
             field.returnPressed.connect(self._submit)
         self.activate.clicked.connect(self._submit)
+        self.subscribe.clicked.connect(self.subscribe_requested)
         self.plans.clicked.connect(self.plans_requested)
         self.back.clicked.connect(self.back_requested)
         self.cancel.clicked.connect(self.cancel_requested)
@@ -83,17 +89,22 @@ class ActivationWindow(QWidget):
     def session_mode(self):
         return self._session_mode
 
-    def set_mode(self, *, session, cancelable=False, email=""):
+    def set_payment_site(self, available):
+        self.plans.setVisible(available)
+
+    def set_mode(self, *, session, cancelable=False, email="", trial_ended=False):
         self._session_mode = session
         for widget in (self.email_label, self.email, self.password_label, self.password):
             widget.setVisible(not session)
         self.back.setVisible(not session)
         self.cancel.setVisible(cancelable)
-        self.title.setText("Renovar licença" if cancelable else "Licença vencida")
+        self.title.setText("Renovar licença" if cancelable else
+                           "Fim do período de teste" if trial_ended else "Licença vencida")
         self.intro.setText(
             "Informe a chave de ativação para renovar. A validade do plano é somada à atual."
             if cancelable else
-            "Para continuar usando o DTF Manager, ative uma nova chave. "
+            ("Seu período de teste terminou. " if trial_ended else "")
+            + "Para continuar usando o DTF Manager, assine um plano ou ative uma chave. "
             + ("" if session else "Informe o e-mail e a senha da sua conta."))
         if email and not self.email.text():
             self.email.setText(email)
@@ -120,7 +131,7 @@ class ActivationWindow(QWidget):
     def set_busy(self, busy, text="Ativando..."):
         self._busy = busy
         for widget in (self.email, self.password, self.key, self.activate, self.back, self.cancel,
-                       self.plans):
+                       self.subscribe, self.plans):
             widget.setEnabled(not busy)
         self.activate.setText(text if busy else "Ativar chave")
         if busy:
