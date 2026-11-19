@@ -50,7 +50,7 @@ def load_plans(path=None):
     """Plans from DTF_PLANS_FILE, else the bundled data/planos.json."""
     source = Path(path) if path else Path(config.plans_file_override() or DEFAULT_PLANS_FILE)
     try:
-        return parse_plans(json.loads(source.read_text(encoding="utf-8")))
+        return parse_plans(json.loads(source.read_text(encoding="utf-8-sig")))
     except PlansError:
         raise
     except (OSError, ValueError):

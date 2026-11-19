@@ -84,6 +84,14 @@ class PackagedConfigTests(unittest.TestCase):
         with patch.dict(os.environ, {"DTF_WHATSAPP_NUMBER": config.EXAMPLE_WHATSAPP}):
             self.assertEqual(config.whatsapp_number(), config.EXAMPLE_WHATSAPP)
 
+    def test_file_saved_with_a_utf8_bom_is_still_read(self):
+        # Windows editors (Notepad, PowerShell Set-Content) add a BOM.
+        self.file.write_bytes(b"\xef\xbb\xbf" + json.dumps(GOOD_APP).encode("utf-8"))
+        self.assertEqual(config.whatsapp_number(), "5521988887777")
+        plans_file = Path(self.temp.name) / "p.json"
+        plans_file.write_bytes(b"\xef\xbb\xbf" + json.dumps(GOOD_PLANS).encode("utf-8"))
+        self.assertEqual(release_problems(self.file, plans_file), [])
+
     def test_contact_is_limited_in_size(self):
         self.write(contato_suporte="x" * 500)
         self.assertEqual(len(config.support_contact()), 120)

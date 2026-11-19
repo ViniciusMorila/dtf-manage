@@ -61,7 +61,7 @@ def payment_url():
 def _app_config():
     """Values packaged with the executable (data/app_config.json); {} when unreadable."""
     try:
-        data = json.loads(APP_CONFIG_FILE.read_text(encoding="utf-8"))
+        data = json.loads(APP_CONFIG_FILE.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
