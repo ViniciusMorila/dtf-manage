@@ -5,21 +5,21 @@ import threading
 import time
 
 
-def _run_application() -> int:
+def _run_application(*, development_no_auth=False) -> int:
     from dtf_manager.core import auth_timing
     auth_timing.start_application()
     with auth_timing.span("bootstrap_ui_import"):
         from dtf_manager.core.bootstrap import run_application
 
-    return run_application()
+    return run_application(development_no_auth=development_no_auth)
 
 
-def _run_with_auto_reload() -> int:
+def _run_with_auto_reload(*, development_no_auth=False) -> int:
     try:
         from watchdog.events import FileSystemEventHandler
         from watchdog.observers import Observer
     except ImportError:
-        return _run_application()
+        return _run_application(development_no_auth=development_no_auth)
 
     reload_requested = threading.Event()
 
@@ -39,8 +39,11 @@ def _run_with_auto_reload() -> int:
     observer.start()
     try:
         while True:
+            command = [sys.executable, str(Path(__file__).resolve()), "--no-reload"]
+            if development_no_auth:
+                command.append("--no-auth")
             child = subprocess.Popen(
-                [sys.executable, str(Path(__file__).resolve()), "--no-reload"],
+                command,
                 cwd=project_path,
             )
             while child.poll() is None and not reload_requested.wait(0.2):
@@ -70,4 +73,7 @@ if __name__ == "__main__":
     # must never restart because importing a spreadsheet dependency touched a
     # file monitored by Windows/OneDrive.
     auto_reload = "--reload" in sys.argv and not getattr(sys, "frozen", False)
-    raise SystemExit(_run_with_auto_reload() if auto_reload else _run_application())
+    development_no_auth = "--no-auth" in sys.argv and not getattr(sys, "frozen", False)
+    if auto_reload:
+        raise SystemExit(_run_with_auto_reload(development_no_auth=development_no_auth))
+    raise SystemExit(_run_application(development_no_auth=development_no_auth))

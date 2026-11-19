@@ -59,6 +59,17 @@ class LazyAuthUiTests(unittest.TestCase):
         self.assertEqual(self.client.calls, [])
         self.factory.assert_not_called()
 
+    def test_development_no_auth_opens_main_without_network_or_login(self):
+        self.controller._development_no_auth = True
+        self.controller.start()
+        self.assertEqual(self.client.calls, [])
+        self.assertIsNone(self.controller._login_window)
+        self.factory.assert_called_once()
+        self.assertTrue(self.main.isVisible())
+        self.assertIn("SEM AUTENTICACAO", self.main.windowTitle())
+        self.controller.logout()
+        self.assertEqual(self.client.calls, [])
+
     def test_invalid_refresh_shows_login_and_clears_invalid_session(self):
         self.controller.start()
         self.client.respond(ApiResult(401, error="http"))

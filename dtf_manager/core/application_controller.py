@@ -15,7 +15,8 @@ def create_main_window():
 
 
 class ApplicationController(QObject):
-    def __init__(self, app, *, client=None, main_window_factory=None, storage=None):
+    def __init__(self, app, *, client=None, main_window_factory=None, storage=None,
+                 development_no_auth=False):
         super().__init__(app)
         self.app = app
         self.client = client if client is not None else ApiClient(self)
@@ -25,6 +26,7 @@ class ApplicationController(QObject):
         self._login_window = None
         self.main_window = None
         self._factory = main_window_factory or create_main_window
+        self._development_no_auth = development_no_auth
         self._busy = False
         self._stopped = False
         self._transitioning = False
@@ -65,6 +67,9 @@ class ApplicationController(QObject):
         if self._session_locked:
             self.login_window.show_locked()
             self.login_window.show()
+            return
+        if self._development_no_auth:
+            self._open_main_window()
             return
         self.refresh_session()
 
@@ -151,12 +156,22 @@ class ApplicationController(QObject):
             self.login_window.show_failure(message, retry_license=True, allow_new_login=True)
             self.login_window.show()
             return
+        auth_timing.emit("license_to_main_window", license_checked)
+        self._open_main_window()
+
+    def _open_main_window(self):
         if self.main_window is None:
-            auth_timing.emit("license_to_main_window", license_checked)
             with auth_timing.span("main_window_init"):
                 self.main_window = self._factory()
             if hasattr(self.main_window, "logout_requested"):
                 self.main_window.logout_requested.connect(self.logout)
+            if self._development_no_auth:
+                self.main_window.setWindowTitle(
+                    self.main_window.windowTitle() + " [DEV - SEM AUTENTICACAO]"
+                )
+                logout_button = getattr(self.main_window, "logout_button", None)
+                if logout_button is not None:
+                    logout_button.setText("Sair do aplicativo")
         self.main_window.setEnabled(True)
         auth_timing.observe_first_paint(self.main_window)
         self.main_window.showMaximized()
@@ -167,6 +182,14 @@ class ApplicationController(QObject):
 
     def logout(self):
         if self._logout_pending or self._stopped:
+            return
+        if self._development_no_auth:
+            if (self.main_window is not None
+                    and hasattr(self.main_window, "prepare_logout")
+                    and not self.main_window.prepare_logout()):
+                return
+            if self.main_window is not None:
+                self.main_window.close()
             return
         if self.main_window is not None:
             if hasattr(self.main_window, "prepare_logout") and not self.main_window.prepare_logout():
