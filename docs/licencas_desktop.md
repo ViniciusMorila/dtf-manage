@@ -113,13 +113,16 @@ carência mais cedo.
   DDD + 9 + 8 dígitos, fixo DDD + 8 dígitos começando em 2 a 5; aceita `+55`),
   e-mail, senha (mínimo 8, com letra e número) e confirmação. O servidor valida de
   novo. `cpf` e `plan_code` não são enviados.
-- **Licença vencida / Tenho uma chave**: e-mail, senha e chave. Mostra os planos e
-  o botão **"Ver planos e comprar"**, que abre `DTF_PAYMENT_URL`. Com sessão
-  válida (licença que venceu durante o uso) pede só a chave.
-- **Renovação antecipada**: menu **Conta → Renovar licença (inserir chave)...** na
-  barra de status. Usa o Bearer e soma a duração à validade atual.
+- **Licença vencida / fim do teste / Tenho uma chave**: e-mail, senha e chave.
+  Tem o botão **"Assinar"** (abre a tela de planos). Se o teste terminou, o título
+  é "Fim do período de teste". Com sessão válida (licença que venceu durante o
+  uso) pede só a chave. O botão "Ver planos no site" (`DTF_PAYMENT_URL`) só
+  aparece se essa variável estiver configurada.
+- **Assinar** (tela de planos): ver "Assinatura pelo WhatsApp" abaixo.
+- **Renovação antecipada**: menu **Conta → Renovar licença (inserir chave)...**.
+  Usa o Bearer e soma a duração à validade atual.
 - **Barra de status**: plano e dias restantes. No teste, destaque com os dias que
-  faltam; com 7 dias ou menos, aviso discreto e o atalho "Renovar".
+  faltam; com 7 dias ou menos, aviso discreto e o botão **"Assinar"**.
 - **Sair da conta**: apaga o refresh token e o cache da licença. O ID da máquina
   é calculado do hardware, então continua o mesmo.
 
@@ -127,12 +130,50 @@ Textos de erro são do app, em português, por `error.code`
 (`services/error_messages.py`), com fallback para o `error.message` da API. O
 `Retry-After` do 429 vira "Aguarde N minutos".
 
+## Assinatura pelo WhatsApp (fluxo manual)
+
+Não há pagamento nem chamada à API nessa tela. O fluxo é:
+
+1. O teste ou a licença vence (ou o usuário clica em **Assinar** no menu Conta ou
+   na barra de status, que também aparece com 7 dias ou menos). Abre a tela
+   **Assinar** com Mensal, Semestral, Anual e Vitalício (nome, duração, preço e
+   botão **Escolher**). O Anual aparece destacado como "Mais vantajoso", sem
+   desconto calculado.
+2. Ao escolher, o app abre `https://wa.me/<DTF_WHATSAPP_NUMBER>?text=<mensagem>`
+   (texto codificado com `urllib.parse.quote`) com
+   `QDesktopServices.openUrl`. Mensagem: `Olá! Quero assinar o DTF Manager.
+   Plano: Anual (R$ 449,90). Nome: ... E-mail da conta: .... Telefone: ....`
+   Nome, e-mail e telefone vêm da sessão (cadastro/login) ou do cache local da
+   licença. O que não for conhecido é omitido; sem e-mail, a mensagem diz que o
+   cliente vai informá-lo na conversa. **Nunca** vão senha, token nem ID da máquina.
+3. A tela mostra: "Finalize o pagamento pelo WhatsApp. Quando receber a chave,
+   clique em 'Tenho uma chave'.", com o botão **Tenho uma chave** (vai direto à
+   tela de chave) e **Copiar mensagem** (caso o WhatsApp não abra).
+4. Você conversa, recebe o pagamento, gera a chave no painel admin
+   (`POST /admin/chaves` / página `/admin`) e envia ao cliente.
+5. O cliente ativa em **Tenho uma chave** (e-mail, senha e chave) ou, com sessão,
+   em **Conta → Renovar licença**. A chave é de uso único e a validade é somada à
+   atual.
+
+### Arquivo de planos
+
+`dtf_manager/data/planos.json` (empacotado no executável). Cada plano tem
+`codigo` (`MENSAL`, `SEMESTRAL`, `ANUAL` ou `VITALICIO`), `nome`, `duracao`,
+`preco` e, opcionalmente, `destaque` (texto do selo). Os valores entregues são de
+**EXEMPLO**, com `"exemplo": true`: enquanto isso, a tela mostra "(EXEMPLO)" ao lado
+dos preços e um aviso. Troque os preços e mude `exemplo` para `false`. Para não
+recompilar, aponte `DTF_PLANS_FILE` para um arquivo seu. Arquivo inválido gera
+um aviso e a tela não abre. O preço do arquivo é o que vai na mensagem; o preço
+real cobrado é combinado por você na conversa, e a duração do plano vem da chave.
+
 ## Variáveis de ambiente
 
 | Variável | Padrão | Uso |
 | --- | --- | --- |
 | `DTF_API_URL` | `https://dtf-manager-api-production.up.railway.app` | URL da API. Exige `https://`; `http://` só para `localhost`, `127.0.0.1` ou `::1`. Valor inválido impede a abertura com uma mensagem. |
-| `DTF_PAYMENT_URL` | `https://example.com/dtf-manager/planos` (**exemplo, troque**) | Página aberta por "Ver planos e comprar". Só `https://`. |
+| `DTF_WHATSAPP_NUMBER` | ausente | Seu WhatsApp para a assinatura: formato internacional, **só dígitos** (ex.: `5511999999999`). Sem ele (ou malformado) a tela "Assinar" avisa e não abre link. Não há valor padrão no código. |
+| `DTF_PLANS_FILE` | `dtf_manager/data/planos.json` | Arquivo de planos e preços alternativo (permite trocar preços sem recompilar). |
+| `DTF_PAYMENT_URL` | ausente | Opcional e secundário: página de compra no site, mostrada como "Ver planos no site". Só `https://`. |
 | `DTF_ALLOW_NO_AUTH` | ausente | Precisa ser `1` para o modo `--no-auth`. |
 | `DTF_SUPPORT_CONTACT` | ausente | Texto opcional (e-mail ou telefone) anexado às mensagens que mandam falar com o suporte. |
 | `DTF_AUTH_TIMING` | ausente | `1` liga os tempos de diagnóstico (já existia). |

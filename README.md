@@ -25,7 +25,9 @@ builds empacotados), é marcado no título da janela e não deve ser usado para 
 ## Licenças, API e executável
 
 - `DTF_API_URL`: URL da API (padrão: produção). Ex.: `http://127.0.0.1:8000`.
-- `DTF_PAYMENT_URL`: página de compra aberta pelo botão "Ver planos e comprar".
+- `DTF_WHATSAPP_NUMBER`: seu WhatsApp (só dígitos, ex.: `5511999999999`) para a tela "Assinar".
+- `DTF_PLANS_FILE`: arquivo de planos e preços alternativo (padrão: `dtf_manager/data/planos.json`).
+- `DTF_PAYMENT_URL`: opcional, página de compra no site.
 - `.\build.ps1`: gera `dist\DTFManager\DTFManager.exe` (sem instalador).
 
 Detalhes, carência offline de 72 horas e ID da máquina em
