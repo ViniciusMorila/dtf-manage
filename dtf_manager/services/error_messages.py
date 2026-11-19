@@ -20,7 +20,7 @@ _MESSAGES = {
     "ID_MAQUINA_INVALIDO": "Não foi possível identificar este computador. Entre em contato com o suporte.",
     "TESTE_JA_UTILIZADO": (
         "O período de teste já foi utilizado neste computador ou com este telefone. "
-        "Adquira uma chave de ativação para continuar."),
+        "Entre em contato com o suporte para adquirir uma licença."),
     "CHAVE_INVALIDA": "Chave de ativação inválida, já utilizada ou cancelada. Confira o código digitado.",
     "LIMITE_RESETS": "O limite de trocas de computador desta licença foi atingido. Entre em contato com o suporte.",
     "TELEFONE_INVALIDO": "Telefone inválido. Informe um telefone brasileiro com DDD.",

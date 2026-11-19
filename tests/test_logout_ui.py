@@ -2,7 +2,6 @@ from unittest.mock import patch
 
 from PySide6.QtWidgets import QMessageBox
 
-from dtf_manager.core.application_controller import ApplicationController
 from dtf_manager.services.api_client import ApiResult
 import os
 from pathlib import Path
@@ -15,8 +14,8 @@ from dtf_manager.ui.main_window import MainWindow
 from dtf_manager.ui.styles import APP_STYLE
 from dtf_manager.services.sqlite_database import DTFDatabase
 from dtf_manager.services.production_history_repository import ProductionHistoryRepository
+from tests.license_fakes import FakeClient, TOKENS, active, build_controller, dispose_controller
 from tests.session_fakes import FakeSessionStorage
-from tests.test_authentication import FakeClient, TOKENS
 
 
 class LogoutUiTests(unittest.TestCase):
@@ -50,18 +49,13 @@ class LogoutUiTests(unittest.TestCase):
     def connect_session(self):
         client = FakeClient()
         storage = FakeSessionStorage()
-        controller = ApplicationController(self.app, client=client, storage=storage,
-                                           main_window_factory=lambda: self.window)
-        def dispose():
-            controller.stop()
-            controller._transitioning = True
-            controller.login_window.close()
-            controller.login_window.deleteLater()
-            controller.deleteLater()
-        self.addCleanup(dispose)
+        controller = build_controller(self.app, client, storage=storage,
+                                      factory=lambda: self.window)
+        controller.login_window
+        self.addCleanup(lambda: dispose_controller(self.app, controller))
         controller.login("fake@example.com", "fake-password")
         client.respond(ApiResult(200, TOKENS))
-        client.respond(ApiResult(200, {"active": True, "status": "ACTIVE"}))
+        client.respond(active())
         return controller, client, storage
 
     def test_visible_logout_button_reaches_controller_and_returns_to_login(self):
