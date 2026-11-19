@@ -9,7 +9,7 @@ if __package__ in (None, ""):
 
 from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QFont
-from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget
 
 from dtf_manager.core.constants import APP_NAME
 from dtf_manager.ui.panels.artwork_panel import ArtworkPanel
@@ -48,8 +48,16 @@ from dtf_manager.services.active_operation_service import (
 from dtf_manager.ui.widgets.existing_operation_dialog import ExistingOperationDialog
 
 
+def _days_text(days):
+    if days is None:
+        return "sem prazo"
+    return f"{days} dia" + ("" if days == 1 else "s")
+
+
 class MainWindow(QMainWindow):
     logout_requested = Signal()
+    renew_requested = Signal()
+    plans_requested = Signal()
 
     def __init__(self):
         super().__init__()
@@ -75,6 +83,7 @@ class MainWindow(QMainWindow):
         with auth_timing.span("main_build_ui"):
             self._build_ui()
         self._authentication_logout = False
+        self._build_license_status()
         self.logout_button = QPushButton("Sair da conta")
         self.logout_button.clicked.connect(self.logout_requested)
         self.statusBar().addPermanentWidget(self.logout_button)
@@ -86,6 +95,66 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(self.production_history_repository.load_warning, 15000)
         elif self.active_operation_repository.load_warning:
             self.statusBar().showMessage(self.active_operation_repository.load_warning, 15000)
+
+    def _build_license_status(self):
+        """Plan and remaining days in the status bar, plus the account menu."""
+        self.license_label = QLabel()
+        self.license_label.setObjectName("licenseLabel")
+        self.license_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.license_label.hide()
+        self.renew_button = QPushButton("Renovar")
+        self.renew_button.hide()
+        self.renew_button.clicked.connect(self.renew_requested)
+        self.account_button = QPushButton("Conta")
+        menu = QMenu(self.account_button)
+        self.renew_action = menu.addAction("Renovar licença (inserir chave)...")
+        self.plans_action = menu.addAction("Ver planos...")
+        self.renew_action.triggered.connect(self.renew_requested)
+        self.plans_action.triggered.connect(self.plans_requested)
+        self.account_button.setMenu(menu)
+        for widget in (self.license_label, self.renew_button, self.account_button):
+            self.statusBar().addPermanentWidget(widget)
+
+    def set_license_state(self, info, offline_remaining=None):
+        """Show plan and days left. Called by the controller after each validation."""
+        if info is None:
+            self.license_label.hide()
+            self.renew_button.hide()
+            return
+        days = info.dias_restantes
+        tone, show_renew = "normal", False
+        if info.vitalicia:
+            text = f"Plano {info.plan_name}"
+        elif info.plano == "TESTE":
+            text = f"Período de teste: faltam {_days_text(days)}"
+            tone, show_renew = "trial", True
+        else:
+            text = f"Plano {info.plan_name}: {_days_text(days)} restantes"
+            if days is not None and days <= 7:
+                text = f"Plano {info.plan_name}: vence em {_days_text(days)}"
+                tone, show_renew = "warning", True
+        if offline_remaining is not None:
+            hours = max(int(offline_remaining.total_seconds() // 3600), 0)
+            text = (f"Modo offline: licença não validada. Carência restante: {hours // 24} dia(s) "
+                    f"e {hours % 24} h. Conecte-se à internet. | {text}")
+            tone = "offline"
+        self.license_label.setText(text)
+        self.license_label.setToolTip(
+            "Validade: " + (info.data_expiracao[:10] if info.data_expiracao else "sem expiração"))
+        self.license_label.setProperty("tone", tone)
+        self.license_label.style().unpolish(self.license_label)
+        self.license_label.style().polish(self.license_label)
+        self.license_label.show()
+        self.renew_button.setVisible(show_renew)
+
+    def save_for_license_lock(self):
+        """Persist the active operation before the license blocks the window."""
+        try:
+            self._checkpoint_current_operation()
+        except Exception:
+            self.statusBar().showMessage("Não foi possível salvar a operação automaticamente.", 15000)
+            return False
+        return True
 
     def _build_ui(self):
         self.pages = QStackedWidget()

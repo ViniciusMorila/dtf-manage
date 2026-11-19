@@ -99,6 +99,12 @@ QLabel#fieldLabel { color: #a79b9e; font-size: 11px; font-weight: 600; }
 QLabel#unitLabel { color: #8c7e81; font-size: 11px; }
 QLabel#infoIcon { color: #d63655; background: #170b0f; border: 1px solid #5a1827; border-radius: 9px; font-size: 11px; font-weight: 700; }
 QLabel#infoIcon:hover { color: #ff607a; background: #2a0d15; border-color: #a52340; }
+QLabel#licenseLabel { color: #a79b9e; font-size: 11px; }
+QLabel#licenseLabel[tone="trial"], QLabel#licenseLabel[tone="warning"] { color: #e69b45; font-weight: 700; }
+QLabel#licenseLabel[tone="offline"] { color: #e73a59; font-weight: 700; }
+QMenu { background: #0b090a; color: #eee8e9; border: 1px solid #4a1620; padding: 4px; }
+QMenu::item { padding: 6px 22px; border-radius: 4px; }
+QMenu::item:selected { background: #641426; color: #ffffff; }
 QToolTip { color: #eee8e9; background: #100b0d; border: 1px solid #6e1b2e; border-radius: 6px; padding: 6px 9px; font-size: 11px; }
 QDialog#artworkSetupDialog QSpinBox, QDialog#artworkSetupDialog QDoubleSpinBox { background: #0d0a0b; padding: 5px 8px; min-height: 18px; }
 QDialogButtonBox QPushButton { min-width: 96px; padding: 8px 13px; }

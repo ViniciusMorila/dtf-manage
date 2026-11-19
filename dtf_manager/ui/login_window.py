@@ -10,6 +10,8 @@ class LoginWindow(QWidget):
     retry_requested = Signal()
     refresh_retry_requested = Signal()
     new_login_requested = Signal()
+    register_requested = Signal()
+    activate_requested = Signal()
     closed = Signal()
 
     def __init__(self):
@@ -45,6 +47,10 @@ class LoginWindow(QWidget):
         self.enter = QPushButton("Entrar")
         self.enter.setObjectName("primaryButton")
         fields.addWidget(self.enter)
+        self.register = QPushButton("Criar conta")
+        fields.addWidget(self.register)
+        self.have_key = QPushButton("Tenho uma chave")
+        fields.addWidget(self.have_key)
         self.new_login = QPushButton("Voltar ao login")
         self.new_login.hide()
         fields.addWidget(self.new_login)
@@ -57,6 +63,8 @@ class LoginWindow(QWidget):
         self.password.returnPressed.connect(self._submit)
         self.exit.clicked.connect(self.close)
         self.new_login.clicked.connect(self.new_login_requested)
+        self.register.clicked.connect(self.register_requested)
+        self.have_key.clicked.connect(self.activate_requested)
 
     def _submit(self):
         if self._busy:
@@ -86,6 +94,8 @@ class LoginWindow(QWidget):
         self.email.setEnabled(not busy and not retry)
         self.password.setEnabled(not busy and not retry)
         self.new_login.setEnabled(not busy)
+        for link in (self.register, self.have_key):
+            link.setEnabled(not busy)
         self.enter.setText(text if busy else ("Tentar novamente" if retry else "Entrar"))
         if busy:
             self.message.clear()
@@ -107,6 +117,8 @@ class LoginWindow(QWidget):
         self.enter.setEnabled(False)
         self.email.setEnabled(False)
         self.password.setEnabled(False)
+        self.register.setEnabled(False)
+        self.have_key.setEnabled(False)
         self.exit.show()
 
     def closeEvent(self, event):
