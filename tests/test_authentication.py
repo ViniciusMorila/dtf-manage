@@ -17,7 +17,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
 from dtf_manager.core.application_controller import ApplicationController
-from dtf_manager.services.api_client import ApiClient, ApiResult, BASE_URL
+from dtf_manager.core.config import DEFAULT_API_URL as BASE_URL
+from dtf_manager.services.api_client import ApiClient, ApiResult
 from dtf_manager.services.auth_service import AuthService
 from tests.session_fakes import FakeSessionStorage
 

@@ -5,10 +5,12 @@ import sys
 
 from PySide6.QtCore import QLockFile, QStandardPaths
 
-from dtf_manager.services.api_client import BASE_URL
+from dtf_manager.core import config
 
 
-CREDENTIAL_TARGET = "DTF Manager/session/" + BASE_URL
+TARGET_PREFIX = "DTF Manager/session/"
+# Fixed name plus the environment (production, or dev-<hash> for a custom API).
+CREDENTIAL_TARGET = TARGET_PREFIX + "production"
 CREDENTIAL_USER = "desktop-refresh-token"
 
 
@@ -17,8 +19,9 @@ class SessionStorageError(RuntimeError):
 
 
 class SessionStorage:
-    def __init__(self, *, credential_api=None):
+    def __init__(self, *, credential_api=None, environment=None):
         self._api = credential_api
+        self.target = TARGET_PREFIX + (environment or config.environment_name())
         self._lock = None
 
     def _credential_api(self):
@@ -41,7 +44,7 @@ class SessionStorage:
         if self._lock is not None:
             return True
         folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.TempLocation)
-        name = hashlib.sha256(CREDENTIAL_TARGET.encode()).hexdigest()[:20]
+        name = hashlib.sha256(self.target.encode()).hexdigest()[:20]
         lock = QLockFile(str(Path(folder) / ("dtf_manager_session_" + name + ".lock")))
         lock.setStaleLockTime(0)
         if not lock.tryLock(0):
@@ -63,7 +66,7 @@ class SessionStorage:
             api = self._credential_api()
             # One CredWrite replaces the value, without archiving the old token.
             api.CredWrite({"Type": api.CRED_TYPE_GENERIC,
-                           "TargetName": CREDENTIAL_TARGET,
+                           "TargetName": self.target,
                            "UserName": CREDENTIAL_USER,
                            "CredentialBlob": token,
                            "Persist": api.CRED_PERSIST_LOCAL_MACHINE,
@@ -74,7 +77,7 @@ class SessionStorage:
     def load_refresh_token(self):
         try:
             api = self._credential_api()
-            credential = api.CredRead(TargetName=CREDENTIAL_TARGET, Type=api.CRED_TYPE_GENERIC)
+            credential = api.CredRead(TargetName=self.target, Type=api.CRED_TYPE_GENERIC)
             if credential["UserName"] != CREDENTIAL_USER:
                 raise ValueError()
             blob = credential["CredentialBlob"]
@@ -90,7 +93,7 @@ class SessionStorage:
     def delete_refresh_token(self):
         try:
             api = self._credential_api()
-            api.CredDelete(TargetName=CREDENTIAL_TARGET, Type=api.CRED_TYPE_GENERIC)
+            api.CredDelete(TargetName=self.target, Type=api.CRED_TYPE_GENERIC)
         except Exception as error:
             if getattr(error, "winerror", None) == 1168:
                 return
