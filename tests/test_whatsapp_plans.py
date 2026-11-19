@@ -59,6 +59,11 @@ class PlansTests(unittest.TestCase):
 
 
 class WhatsappConfigTests(unittest.TestCase):
+    def setUp(self):
+        missing = patch.object(config, "APP_CONFIG_FILE", Path("nonexistent-app-config.json"))
+        missing.start()
+        self.addCleanup(missing.stop)
+
     def test_number_must_be_international_digits(self):
         for value, expected in [("5511999999999", "5511999999999"), (" 5511999999999 ", "5511999999999"),
                                 ("", None), ("+5511999999999", None), ("11 99999-9999", None),

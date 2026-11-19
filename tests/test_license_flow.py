@@ -1,6 +1,7 @@
 """License flows through the controller: sign-up, activation, periodic checks, grace, blocking."""
 from datetime import timedelta
 import os
+from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 
@@ -53,6 +54,10 @@ class LicenseFlowBase(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        # Independent of the values shipped in dtf_manager/data/app_config.json.
+        missing = patch.object(config, "APP_CONFIG_FILE", Path("nonexistent-app-config.json"))
+        missing.start()
+        self.addCleanup(missing.stop)
         self.client = FakeClient()
         self.storage = FakeSessionStorage("saved-refresh")
         self.store = FakeLicenseStore()

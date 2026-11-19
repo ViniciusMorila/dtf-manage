@@ -1,0 +1,5 @@
+{
+  "aviso": "Preencha antes de gerar o executavel (build.ps1 falha se estiver vazio ou com o valor de exemplo). Variaveis DTF_WHATSAPP_NUMBER e DTF_SUPPORT_CONTACT so sobrescrevem em desenvolvimento.",
+  "whatsapp_numero": "5511999999999",
+  "contato_suporte": ""
+}

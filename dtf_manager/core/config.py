@@ -4,11 +4,15 @@ Nothing here is secret: the API URL, the payment link and the support contact
 are public values. Credentials never pass through this module.
 """
 import hashlib
+import json
 import os
+from pathlib import Path
 from urllib.parse import urlsplit
 
 DEFAULT_API_URL = "https://dtf-manager-api-production.up.railway.app"
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+APP_CONFIG_FILE = Path(__file__).resolve().parents[1] / "data" / "app_config.json"
+EXAMPLE_WHATSAPP = "5511999999999"
 
 
 class ConfigError(ValueError):
@@ -54,14 +58,38 @@ def payment_url():
         return None
 
 
-def whatsapp_number():
-    """Seller WhatsApp (DTF_WHATSAPP_NUMBER): international format, digits only.
+def _app_config():
+    """Values packaged with the executable (data/app_config.json); {} when unreadable."""
+    try:
+        data = json.loads(APP_CONFIG_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
-    Example: 5511999999999. Returns None when missing or malformed, so the app
-    shows a warning instead of opening a broken link. There is no built-in default.
+
+def text_field(data, name):
+    """Stripped text of a JSON field; anything that is not a string counts as empty."""
+    value = data.get(name, "")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def valid_whatsapp(value):
+    return isinstance(value, str) and value.isascii() and value.isdigit() and 10 <= len(value) <= 15
+
+
+def whatsapp_number():
+    """Seller WhatsApp, international format, digits only (e.g. 5511999999999).
+
+    Comes from the packaged data/app_config.json (field whatsapp_numero). The
+    DTF_WHATSAPP_NUMBER environment variable only overrides it, for development.
+    The shipped example number is treated as not configured, so the app shows a
+    warning instead of opening a conversation with a fake number.
     """
-    value = os.environ.get("DTF_WHATSAPP_NUMBER", "").strip()
-    return value if value.isascii() and value.isdigit() and 10 <= len(value) <= 15 else None
+    override = os.environ.get("DTF_WHATSAPP_NUMBER", "").strip()
+    if override:
+        return override if valid_whatsapp(override) else None
+    packaged = text_field(_app_config(), "whatsapp_numero")
+    return packaged if valid_whatsapp(packaged) and packaged != EXAMPLE_WHATSAPP else None
 
 
 def plans_file_override():
@@ -70,7 +98,9 @@ def plans_file_override():
 
 
 def support_contact():
-    return os.environ.get("DTF_SUPPORT_CONTACT", "").strip()[:120]
+    """Support contact: packaged contato_suporte; DTF_SUPPORT_CONTACT overrides it."""
+    override = os.environ.get("DTF_SUPPORT_CONTACT", "").strip()
+    return (override or text_field(_app_config(), "contato_suporte"))[:120]
 
 
 def no_auth_allowed():
