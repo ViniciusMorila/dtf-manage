@@ -120,16 +120,19 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout(corner)
         row.setContentsMargins(8, 4, 12, 4)
         row.setSpacing(10)
-        for widget in (self.license_label, self.greeting_label, self.account_button,
+        self._first_name = ""
+        self._license_info = None
+        self._offline_remaining = None
+        for widget in (self.greeting_label, self.license_label, self.account_button,
                        self.logout_button):
             row.addWidget(widget)
         self.menuBar().setCornerWidget(corner, Qt.Corner.TopRightCorner)
 
     def set_user_name(self, name):
-        """Greeting with the first name; hidden while the name is unknown."""
+        """First name for the greeting; unknown means no greeting."""
         first = (name or "").split(maxsplit=1)
-        self.greeting_label.setText(f"Olá, {first[0][:40]}" if first else "")
-        self.greeting_label.setVisible(bool(first))
+        self._first_name = first[0][:40] if first else ""
+        self._render_account_header()
 
     def set_payment_site(self, available):
         self.plans_action.setVisible(available)
@@ -140,25 +143,43 @@ class MainWindow(QMainWindow):
 
     def set_license_state(self, info, offline_remaining=None):
         """Show plan and days left. Called by the controller after each validation."""
+        self._license_info = info
+        self._offline_remaining = offline_remaining
+        self._render_account_header()
+
+    def _render_account_header(self):
+        """"Olá, Nome (Plano)" first, then the days left; the trial keeps its own message.
+
+        Without a known name the label keeps the full "Plano X: ..." text instead."""
+        info, offline_remaining, name = (self._license_info, self._offline_remaining,
+                                         self._first_name)
+        greeting = f"Olá, {name}" if name else ""
+        if info is not None and name and info.plano != "TESTE":
+            greeting += f" ({info.plan_name})"
+        self.greeting_label.setText(greeting)
+        self.greeting_label.setVisible(bool(greeting))
         if info is None:
             self.license_label.hide()
             return
         days = info.dias_restantes
         tone = "normal"
+        short = bool(name) and info.plano != "TESTE"       # the plan is already in the greeting
         if info.vitalicia:
-            text = f"Plano {info.plan_name}"
+            text = "" if short else f"Plano {info.plan_name}"
         elif info.plano == "TESTE":
             text = f"Período de teste: faltam {_days_text(days)}"
             tone = "trial"
         else:
-            text = f"Plano {info.plan_name}: {_days_text(days)} restantes"
+            text = f"{_days_text(days)} restantes" if short else (
+                f"Plano {info.plan_name}: {_days_text(days)} restantes")
             if days is not None and days <= 7:
-                text = f"Plano {info.plan_name}: vence em {_days_text(days)}"
+                text = (f"vence em {_days_text(days)}" if short
+                        else f"Plano {info.plan_name}: vence em {_days_text(days)}")
                 tone = "warning"
         if offline_remaining is not None:
             hours = max(int(offline_remaining.total_seconds() // 3600), 0)
             text = (f"Modo offline: licença não validada. Carência restante: {hours // 24} dia(s) "
-                    f"e {hours % 24} h. Conecte-se à internet. | {text}")
+                    f"e {hours % 24} h. Conecte-se à internet." + (f" | {text}" if text else ""))
             tone = "offline"
         self.license_label.setText(text)
         self.license_label.setToolTip(
@@ -166,7 +187,7 @@ class MainWindow(QMainWindow):
         self.license_label.setProperty("tone", tone)
         self.license_label.style().unpolish(self.license_label)
         self.license_label.style().polish(self.license_label)
-        self.license_label.show()
+        self.license_label.setVisible(bool(text))
 
     def save_for_license_lock(self):
         """Persist the active operation before the license blocks the window."""

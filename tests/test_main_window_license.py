@@ -51,6 +51,7 @@ class MainWindowLicenseTests(unittest.TestCase):
         cls.temp.cleanup()
 
     def setUp(self):
+        self.window.set_user_name("")
         self.window.set_license_state(None)
 
     def label(self):
@@ -114,6 +115,35 @@ class MainWindowLicenseTests(unittest.TestCase):
         self.assertFalse(greeting.isVisible())
         self.window.set_user_name(None)
         self.assertEqual(greeting.text(), "")
+
+    def test_greeting_shows_the_plan_in_parentheses_and_the_trial_keeps_its_message(self):
+        w, greeting, label = self.window, self.window.greeting_label, self.label()
+        w.set_user_name("Vinicius Morila")
+        w.set_license_state(info(plano="TESTE", dias_restantes=7))
+        self.assertEqual(greeting.text(), "Olá, Vinicius")                  # no parentheses
+        self.assertEqual(label.text(), "Período de teste: faltam 7 dias")
+        w.set_license_state(info(plano="ANUAL", dias_restantes=300))
+        self.assertEqual(greeting.text(), "Olá, Vinicius (Anual)")
+        self.assertEqual(label.text(), "300 dias restantes")
+        w.set_license_state(info(plano="MENSAL", dias_restantes=5))
+        self.assertEqual(greeting.text(), "Olá, Vinicius (Mensal)")
+        self.assertEqual(label.text(), "vence em 5 dias")
+        self.assertEqual(label.property("tone"), "warning")
+        w.set_license_state(info(plano="VITALICIO", data_expiracao=None, dias_restantes=None,
+                                 vitalicia=True))
+        self.assertEqual(greeting.text(), "Olá, Vinicius (Vitalício)")
+        self.assertFalse(label.isVisible())
+
+    def test_greeting_comes_before_the_license_text_in_the_corner(self):
+        corner = self.window.menuBar().cornerWidget(Qt.Corner.TopRightCorner)
+        order = [corner.layout().itemAt(i).widget() for i in range(corner.layout().count())]
+        self.assertEqual(order[:2], [self.window.greeting_label, self.window.license_label])
+
+    def test_without_a_name_the_label_keeps_the_full_plan_text(self):
+        self.window.set_user_name("")
+        self.window.set_license_state(info(plano="MENSAL", dias_restantes=37))
+        self.assertEqual(self.label().text(), "Plano Mensal: 37 dias restantes")
+        self.assertFalse(self.window.greeting_label.isVisible())
 
     def test_account_menu_has_renewal_and_plans_that_reach_the_controller(self):
         received = []
