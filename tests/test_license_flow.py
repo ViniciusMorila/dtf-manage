@@ -167,8 +167,10 @@ class RegistrationTests(LicenseFlowBase):
         self.fill(window)
         window.create.click()
         self.client.respond(http_error(409, "TESTE_JA_UTILIZADO", "texto do servidor"))
-        self.assertIn("período de teste já foi utilizado", window.message.text())
+        self.assertIn("já usou o período de teste", window.message.text())
+        self.assertIn("chave de ativação", window.message.text())
         self.assertNotIn("texto do servidor", window.message.text())
+        self.assertTrue(window.has_key.isChecked())     # asks for a key instead
         self.assertTrue(window.create.isEnabled())
         self.assertEqual(self.paths(), ["/auth/register"])
 

@@ -137,8 +137,11 @@ class AuthService(QObject):
         self._request_tokens("/auth/refresh", {"refresh_token": token, "id_maquina": machine_id})
         return True
 
-    def register(self, name, phone, email, password):
-        """Create the account and the trial license; the API returns no tokens."""
+    def register(self, name, phone, email, password, key=None):
+        """Create the account with the trial license, or with the plan of ``key``.
+
+        The API returns no tokens. With a key it validates, creates the account and
+        consumes the key in one transaction: a refusal creates nothing."""
         if self._operation is not None:
             return False
         self.last_operation = "register"
@@ -162,9 +165,11 @@ class AuthService(QObject):
                 return
             self.registered.emit(LicenseInfo.from_dict((result.data or {}).get("licenca")))
 
-        self.client.post_json("/auth/register", {
-            "nome": name, "telefone": phone, "email": email, "senha": password,
-            "id_maquina": machine_id}, completed)
+        body = {"nome": name, "telefone": phone, "email": email, "senha": password,
+                "id_maquina": machine_id}
+        if key:
+            body["chave_ativacao"] = key
+        self.client.post_json("/auth/register", body, completed)
         return True
 
     def _request_tokens(self, path, body):

@@ -41,6 +41,30 @@ def format_phone_mask(text):
     return f"({digits[:2]}) {digits[2:7]}-{digits[7:]}"
 
 
+# Same alphabet as the API (no 0, 1, I, L, O or U); 16 symbols in 4 groups of 4.
+KEY_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789"
+KEY_LENGTH = 16
+
+
+def format_key_mask(text):
+    """Progressive mask XXXX-XXXX-XXXX-XXXX: upper case, only letters and digits."""
+    chars = re.sub(r"[^A-Za-z0-9]", "", text or "").upper()[:KEY_LENGTH]
+    return "-".join(chars[index:index + 4] for index in range(0, len(chars), 4))
+
+
+def validate_key(text):
+    """Format check only (the server decides whether the key exists)."""
+    chars = format_key_mask(text).replace("-", "")
+    if not chars:
+        return "Informe a chave de ativação."
+    if len(chars) < KEY_LENGTH:
+        return "A chave está incompleta. Ela tem 16 caracteres, no formato XXXX-XXXX-XXXX-XXXX."
+    if any(char not in KEY_ALPHABET for char in chars):
+        return ("A chave tem caracteres que não existem nas chaves (0, 1, I, L, O e U não são usados). "
+                "Confira o código digitado.")
+    return None
+
+
 def validate_name(text):
     value = (text or "").strip()
     if not value:

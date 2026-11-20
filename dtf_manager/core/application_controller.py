@@ -18,10 +18,19 @@ from dtf_manager.services.whatsapp import build_message, build_url
 from dtf_manager.services.session_storage import SessionStorage, SessionStorageError
 
 LICENSE_CHECK_INTERVAL_MS = 60 * 60 * 1000   # periodic validation while the app is open
+DEFAULT_RETRY_AFTER = 60                      # seconds, when a 429 carries no Retry-After
 NEEDS_ACTIVATION = {"LICENCA_EXPIRADA", "LICENCA_NAO_ENCONTRADA"}
 REFUSED = {"LICENCA_BLOQUEADA", "MAQUINA_DIFERENTE", "MAQUINA_EM_USO", "ID_MAQUINA_INVALIDO"}
 WHATSAPP_MISSING = ("O número de WhatsApp para assinatura não está configurado "
                     "(DTF_WHATSAPP_NUMBER). Entre em contato com o suporte.")
+TRIAL_USED_MESSAGE = (
+    "Este computador ou este telefone já usou o período de teste gratuito. Para continuar, "
+    "informe uma chave de ativação no campo abaixo ou toque em Assinar para pedir a sua. "
+    "Digite a senha novamente.")
+INVALID_KEY_ON_REGISTER = (
+    "Chave de ativação inválida: ela não existe, já foi utilizada ou foi cancelada. "
+    "Nenhuma conta foi criada. Confira o código digitado ou peça outra chave ao suporte. "
+    "Digite a senha novamente.")
 GRACE_MESSAGES = {
     "clock_rolled_back": ("O relógio do computador parece ter sido atrasado, então a carência offline "
                           "não é contada. Ajuste a data e a hora do Windows e conecte-se à internet "
@@ -87,6 +96,7 @@ class ApplicationController(QObject):
         self._last_email = ""
         self._last_activation_key = None
         self._activation_retry_key = None
+        self._register_with_key = False
         self._renewal = False
         self._license_timer = QTimer(self)
         self._license_timer.setInterval(license_interval_ms)
@@ -136,6 +146,7 @@ class ApplicationController(QObject):
             from dtf_manager.ui.register_window import RegisterWindow
             self._register_window = RegisterWindow()
             self._register_window.submitted.connect(self.register)
+            self._register_window.subscribe_requested.connect(self._subscribe_from_register)
             self._register_window.back_requested.connect(self.show_login)
             self._register_window.closed.connect(self._login_closed)
         return self._register_window
@@ -193,6 +204,10 @@ class ApplicationController(QObject):
 
     def _subscribe_from_expired(self):
         self.show_subscribe(self._expired_reason)
+
+    def _subscribe_from_register(self):
+        self.show_subscribe("O período de teste já foi utilizado neste computador ou telefone. "
+                            "Assine para receber uma chave de ativação.")
 
     def show_menu_subscribe(self):
         """Entry from the Conta menu and the status bar button."""
@@ -260,8 +275,10 @@ class ApplicationController(QObject):
 
     def _subscribe_have_key(self):
         origin = self._subscribe_return
-        if origin is not None and origin is self._activation_window:
+        if origin is not None and origin in (self._activation_window, self._register_window):
             self._show(origin)
+            if origin is self._register_window:
+                self._register_window.require_key(self._register_window.message.text())
         elif self.main_window is not None and self.main_window.isEnabled():
             self._subscribe_window.hide()
             self.show_renewal()
@@ -343,14 +360,15 @@ class ApplicationController(QObject):
         self.license.cancel()
         self.login_window.reset_for_login("Entrar novamente criará uma nova sessão. A sessão anterior não será revogada por esta ação.")
 
-    def register(self, name, phone, email, password):
+    def register(self, name, phone, email, password, key=""):
         if self._busy or self._stopped or self._session_locked:
             return
         self._busy = True
         self._last_email = email
+        self._register_with_key = bool(key)
         self._contact.update({"name": name, "email": email.strip(), "phone": phone})
         self._pending_credentials = (email, password)
-        self.auth.register(name, phone, email, password)
+        self.auth.register(name, phone, email, password, key or None)
 
     def _registered(self, _license):
         if self._stopped:
@@ -369,9 +387,21 @@ class ApplicationController(QObject):
             return
         self._busy = False
         self._pending_credentials = None
-        text = (self._machine_message() if kind == "machine_id"
-                else describe(self.auth.last_failure))
-        self.register_window.show_failure(text)
+        failure = self.auth.last_failure
+        window = self.register_window
+        if kind == "machine_id":
+            window.show_failure(self._machine_message())
+        elif failure.code == "TESTE_JA_UTILIZADO" and not self._register_with_key:
+            # No account was created: ask for a key (or offer the WhatsApp subscription).
+            window.require_key(TRIAL_USED_MESSAGE)
+        elif failure.code == "CHAVE_INVALIDA" and self._register_with_key:
+            window.show_failure(INVALID_KEY_ON_REGISTER)
+            window.key.setFocus()
+        elif failure.kind == "rate_limited":
+            window.show_failure(describe(failure))
+            window.hold(failure.retry_after or DEFAULT_RETRY_AFTER)
+        else:
+            window.show_failure(describe(failure))
 
     def _authenticated(self):
         if self._stopped or self._logout_pending:
