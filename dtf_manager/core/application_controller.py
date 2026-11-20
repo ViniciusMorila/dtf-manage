@@ -59,7 +59,7 @@ def _open_url(url):
 class ApplicationController(QObject):
     def __init__(self, app, *, client=None, main_window_factory=None, storage=None,
                  development_no_auth=False, machine_id=None, license_store=None, grace=None,
-                 license_interval_ms=LICENSE_CHECK_INTERVAL_MS, url_opener=None,
+                 license_interval_ms=None, url_opener=None,
                  plans_loader=None):
         super().__init__(app)
         self.app = app
@@ -104,6 +104,10 @@ class ApplicationController(QObject):
         self._throttle_timer.setSingleShot(True)
         self._throttle_timer.timeout.connect(self._throttle_retry)
         self._license_timer = QTimer(self)
+        if license_interval_ms is None:
+            # 3600 s, shortened only by DTF_VALIDATION_INTERVAL_SECONDS in development.
+            license_interval_ms = max(
+                100, int(config.validation_interval_seconds() * 1000))
         self._license_timer.setInterval(license_interval_ms)
         self._license_timer.timeout.connect(self._periodic_check)
         self.auth.authenticated.connect(self._authenticated)

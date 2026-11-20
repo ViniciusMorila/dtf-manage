@@ -6,6 +6,8 @@ are public values. Credentials never pass through this module.
 import hashlib
 import json
 import os
+import re
+import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -105,3 +107,52 @@ def support_contact():
 
 def no_auth_allowed():
     return os.environ.get("DTF_ALLOW_NO_AUTH") == "1"
+
+
+# ---- development-only overrides -----------------------------------------------------
+# Never honoured by the frozen executable, and only with an explicit opt-in: the same
+# DTF_ALLOW_NO_AUTH=1 that --no-auth needs (by itself it does not skip authentication),
+# or the equivalent DTF_ALLOW_DEV_OVERRIDES=1.
+
+DEFAULT_VALIDATION_INTERVAL_SECONDS = 3600
+_MACHINE_ID_OVERRIDE_FORMAT = re.compile(r"^[a-z0-9._:{}\-]{8,128}$")   # same as the API
+
+
+def is_frozen():
+    return bool(getattr(sys, "frozen", False))
+
+
+def dev_overrides_allowed():
+    return not is_frozen() and (no_auth_allowed()
+                                or os.environ.get("DTF_ALLOW_DEV_OVERRIDES") == "1")
+
+
+def machine_id_override():
+    """Fixed machine id from DTF_MACHINE_ID_OVERRIDE, to simulate another computer.
+
+    None when unset, in the frozen executable or without the development opt-in.
+    A malformed value raises ConfigError (the API would refuse it anyway).
+    """
+    value = os.environ.get("DTF_MACHINE_ID_OVERRIDE", "").strip().lower()
+    if not value or not dev_overrides_allowed():
+        return None
+    if not _MACHINE_ID_OVERRIDE_FORMAT.fullmatch(value):
+        raise ConfigError("DTF_MACHINE_ID_OVERRIDE inválida: use de 8 a 128 caracteres "
+                          "entre letras minúsculas, números e . _ : { } -")
+    return value
+
+
+def validation_interval_seconds():
+    """Period of the license validation while the app is open (default 3600 s).
+
+    DTF_VALIDATION_INTERVAL_SECONDS shortens it for development only; an invalid or
+    non-positive value is ignored.
+    """
+    raw = os.environ.get("DTF_VALIDATION_INTERVAL_SECONDS", "").strip()
+    if not raw or not dev_overrides_allowed():
+        return DEFAULT_VALIDATION_INTERVAL_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError:
+        return DEFAULT_VALIDATION_INTERVAL_SECONDS
+    return seconds if 0 < seconds < float("inf") else DEFAULT_VALIDATION_INTERVAL_SECONDS

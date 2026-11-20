@@ -210,8 +210,19 @@ _cached = None
 
 
 def get_machine_id():
-    """Machine id of this process, calculated once."""
+    """Machine id of this process, calculated once.
+
+    DTF_MACHINE_ID_OVERRIDE (development only, see core.config) replaces it; the
+    frozen executable ignores it.
+    """
     global _cached
+    from dtf_manager.core.config import ConfigError, machine_id_override
+    try:
+        override = machine_id_override()
+    except ConfigError as error:
+        raise MachineIdError(str(error)) from error
+    if override:
+        return override
     if _cached is None:
         _cached = build_machine_id()
     return _cached
