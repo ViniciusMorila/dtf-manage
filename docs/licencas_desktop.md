@@ -19,7 +19,7 @@ este documento diverge dele, a divergência está marcada como **decisão do app
 
 | Rota | Quando |
 | --- | --- |
-| `POST /auth/register` | Tela "Criar conta". Cria a conta e o teste de 7 dias. Não devolve tokens; o app faz o login em seguida. |
+| `POST /auth/register` | Tela "Criar conta". Cria a conta e o teste de 7 dias, ou, com `chave_ativacao`, a conta já com o plano da chave. Não devolve tokens; o app faz o login em seguida. |
 | `POST /auth/login` | Envia `email`, `senha` e `id_maquina`. |
 | `POST /auth/refresh` | A cada abertura e quando o access token expira. Envia `refresh_token` e `id_maquina`. |
 | `GET /licencas/status` | A cada abertura e a cada 1 hora. Cabeçalhos `Authorization: Bearer` e `X-Id-Maquina`. |
@@ -112,7 +112,8 @@ carência mais cedo.
 - **Criar conta**: nome, telefone (máscara brasileira e validação: celular
   DDD + 9 + 8 dígitos, fixo DDD + 8 dígitos começando em 2 a 5; aceita `+55`),
   e-mail, senha (mínimo 8, com letra e número) e confirmação. O servidor valida de
-  novo. `cpf` e `plan_code` não são enviados.
+  novo. `cpf` e `plan_code` não são enviados. Veja "Criar conta com chave de
+  ativação" abaixo.
 - **Licença vencida / fim do teste / Tenho uma chave**: e-mail, senha e chave.
   Tem o botão **"Assinar"** (abre a tela de planos). Se o teste terminou, o título
   é "Fim do período de teste". Com sessão válida (licença que venceu durante o
@@ -129,6 +130,46 @@ carência mais cedo.
 Textos de erro são do app, em português, por `error.code`
 (`services/error_messages.py`), com fallback para o `error.message` da API. O
 `Retry-After` do 429 vira "Aguarde N minutos".
+
+## Criar conta com chave de ativação
+
+A tela "Criar conta" tem a opção **"Já tenho uma chave de ativação"**. Ao marcar,
+aparece o campo da chave, com máscara `XXXX-XXXX-XXXX-XXXX` (maiúsculas, hífens
+automáticos) e validação de formato antes de qualquer chamada: 16 caracteres do
+alfabeto das chaves (não existem `0`, `1`, `I`, `L`, `O` e `U`). O botão passa a
+dizer "Criar conta e ativar chave". Com a chave preenchida, o cadastro envia
+`chave_ativacao` (contrato: `docs/API_LICENCAS.md` da API, "Mudanças no contrato").
+Sem a opção marcada, o cadastro é o de sempre, com o teste de 7 dias e **sem** o campo.
+
+| Resposta do cadastro | O que o app faz |
+| --- | --- |
+| `TESTE_JA_UTILIZADO` (sem chave) | Explica que este computador ou este telefone já usou o teste e que é preciso uma chave. **Marca a opção automaticamente**, mostra o campo e **foca nele**, e mostra o botão **"Assinar"** (fluxo do WhatsApp, voltando para esta tela; "Tenho uma chave" na tela de planos volta ao campo). Nenhuma conta foi criada; as senhas são limpas e precisam ser digitadas de novo. |
+| `CHAVE_INVALIDA` | "Chave inválida: não existe, já foi utilizada ou foi cancelada. Nenhuma conta foi criada." A chave digitada é mantida para correção. |
+| `MUITAS_TENTATIVAS` | Mostra o tempo de espera e **desabilita o botão durante o `Retry-After`** ("Aguarde N s"), mesmo com Enter. Sem o cabeçalho, espera 60 s. Vale também para a chave errada, que conta no limite por e-mail (10 em 15 minutos). |
+| 201 | Login automático (como no teste) e `GET /licencas/status`. A barra de status mostra o **plano pago e a validade** (ou "Plano Vitalício"). |
+
+## Limite de requisições (HTTP 429) no refresh, logout e status
+
+`MUITAS_TENTATIVAS` em `POST /auth/refresh`, `POST /auth/logout` e
+`GET /licencas/status` é uma **falha temporária**, nunca uma recusa:
+
+- **A sessão não é encerrada.** O 429 do refresh não consome o refresh token, então o
+  token salvo continua valendo e é reutilizado na próxima tentativa.
+- **A janela principal não é bloqueada** e nada é perdido: não há aviso modal nem
+  salvamento forçado. O app mostra um aviso discreto na barra de status
+  ("Muitas tentativas ao validar a licença. Nova tentativa em N segundos. Sua sessão
+  continua válida.").
+- **O cache da licença não é apagado.**
+- **Respeita o `Retry-After`**: a próxima tentativa só acontece depois dele (60 s se o
+  cabeçalho faltar), **uma** por vez e no máximo **3 seguidas**; depois disso, só a
+  validação de 1 hora. Não há laço de repetição. Qualquer sucesso zera a contagem.
+- **Na abertura do app**, se houver cache dentro da carência de 72 horas, o app abre
+  normalmente usando o cache (com o aviso de licença não validada) enquanto espera. Sem
+  cache válido, mostra o login com o botão "Tentar novamente" desabilitado durante o
+  `Retry-After`, e a sessão salva continua preservada.
+- **Sair da conta** com 429: o app avisa na barra de status e continua conectado, sem
+  oferecer "sair só neste computador" (isso é só para falha de rede).
+- Uma licença já bloqueada continua bloqueada: o 429 nunca libera a janela.
 
 ## Assinatura pelo WhatsApp (fluxo manual)
 
