@@ -99,6 +99,8 @@ QLabel#fieldLabel { color: #a79b9e; font-size: 11px; font-weight: 600; }
 QLabel#unitLabel { color: #8c7e81; font-size: 11px; }
 QLabel#infoIcon { color: #d63655; background: #170b0f; border: 1px solid #5a1827; border-radius: 9px; font-size: 11px; font-weight: 700; }
 QLabel#infoIcon:hover { color: #ff607a; background: #2a0d15; border-color: #a52340; }
+QMenuBar { background: transparent; }
+QLabel#greetingLabel { color: #eee8e9; font-size: 12px; font-weight: 600; }
 QLabel#licenseLabel { color: #a79b9e; font-size: 11px; }
 QLabel#licenseLabel[tone="trial"], QLabel#licenseLabel[tone="warning"] { color: #e69b45; font-weight: 700; }
 QLabel#licenseLabel[tone="offline"] { color: #e73a59; font-weight: 700; }

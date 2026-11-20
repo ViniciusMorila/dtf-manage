@@ -85,9 +85,6 @@ class MainWindow(QMainWindow):
             self._build_ui()
         self._authentication_logout = False
         self._build_license_status()
-        self.logout_button = QPushButton("Sair da conta")
-        self.logout_button.clicked.connect(self.logout_requested)
-        self.statusBar().addPermanentWidget(self.logout_button)
         self.order_import_state.changed.connect(self._checkpoint_current_operation)
         self._refresh_active_operation_card()
         if self.link_memory_repository.load_warning:
@@ -98,14 +95,15 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(self.active_operation_repository.load_warning, 15000)
 
     def _build_license_status(self):
-        """Plan and remaining days in the status bar, plus the account menu."""
+        """Top right corner: plan and days left, greeting, account menu and sign out."""
         self.license_label = QLabel()
         self.license_label.setObjectName("licenseLabel")
         self.license_label.setTextFormat(Qt.TextFormat.PlainText)
         self.license_label.hide()
-        self.renew_button = QPushButton("Assinar")
-        self.renew_button.hide()
-        self.renew_button.clicked.connect(self.subscribe_requested)
+        self.greeting_label = QLabel()
+        self.greeting_label.setObjectName("greetingLabel")
+        self.greeting_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.greeting_label.hide()
         self.account_button = QPushButton("Conta")
         menu = QMenu(self.account_button)
         self.subscribe_action = menu.addAction("Assinar...")
@@ -116,8 +114,22 @@ class MainWindow(QMainWindow):
         self.renew_action.triggered.connect(self.renew_requested)
         self.plans_action.triggered.connect(self.plans_requested)
         self.account_button.setMenu(menu)
-        for widget in (self.license_label, self.renew_button, self.account_button):
-            self.statusBar().addPermanentWidget(widget)
+        self.logout_button = QPushButton("Sair da conta")
+        self.logout_button.clicked.connect(self.logout_requested)
+        corner = self._corner = QWidget(self.menuBar())
+        row = QHBoxLayout(corner)
+        row.setContentsMargins(8, 4, 12, 4)
+        row.setSpacing(10)
+        for widget in (self.license_label, self.greeting_label, self.account_button,
+                       self.logout_button):
+            row.addWidget(widget)
+        self.menuBar().setCornerWidget(corner, Qt.Corner.TopRightCorner)
+
+    def set_user_name(self, name):
+        """Greeting with the first name; hidden while the name is unknown."""
+        first = (name or "").split(maxsplit=1)
+        self.greeting_label.setText(f"Olá, {first[0][:40]}" if first else "")
+        self.greeting_label.setVisible(bool(first))
 
     def set_payment_site(self, available):
         self.plans_action.setVisible(available)
@@ -130,20 +142,19 @@ class MainWindow(QMainWindow):
         """Show plan and days left. Called by the controller after each validation."""
         if info is None:
             self.license_label.hide()
-            self.renew_button.hide()
             return
         days = info.dias_restantes
-        tone, show_renew = "normal", False
+        tone = "normal"
         if info.vitalicia:
             text = f"Plano {info.plan_name}"
         elif info.plano == "TESTE":
             text = f"Período de teste: faltam {_days_text(days)}"
-            tone, show_renew = "trial", True
+            tone = "trial"
         else:
             text = f"Plano {info.plan_name}: {_days_text(days)} restantes"
             if days is not None and days <= 7:
                 text = f"Plano {info.plan_name}: vence em {_days_text(days)}"
-                tone, show_renew = "warning", True
+                tone = "warning"
         if offline_remaining is not None:
             hours = max(int(offline_remaining.total_seconds() // 3600), 0)
             text = (f"Modo offline: licença não validada. Carência restante: {hours // 24} dia(s) "
@@ -156,7 +167,6 @@ class MainWindow(QMainWindow):
         self.license_label.style().unpolish(self.license_label)
         self.license_label.style().polish(self.license_label)
         self.license_label.show()
-        self.renew_button.setVisible(show_renew)
 
     def save_for_license_lock(self):
         """Persist the active operation before the license blocks the window."""

@@ -98,6 +98,7 @@ class ApplicationController(QObject):
         self._last_activation_key = None
         self._activation_retry_key = None
         self._register_with_key = False
+        self._profile_requested = False
         self._throttle_retries = 0
         self._renewal = False
         self._throttle_timer = QTimer(self)
@@ -357,6 +358,8 @@ class ApplicationController(QObject):
                 or (self.main_window is not None and self.main_window.isEnabled())):
             return
         self._busy = True
+        if email.strip().lower() != (self._last_email or "").strip().lower():
+            self._contact.pop("name", None)      # another account: do not greet the previous one
         self._last_email = email
         self._contact["email"] = email.strip()
         self.login_window.set_busy(True)
@@ -747,6 +750,7 @@ class ApplicationController(QObject):
                     logout_button.setText("Sair do aplicativo")
         self.main_window.setEnabled(True)
         self._apply_license_state(offline)
+        self._apply_user_name()
         if not self.main_window.isVisible():
             auth_timing.observe_first_paint(self.main_window)
             self.main_window.showMaximized()
@@ -758,6 +762,29 @@ class ApplicationController(QObject):
         self._transitioning = False
         if not self._development_no_auth:
             self._license_timer.start()
+
+    def _apply_user_name(self):
+        """Greeting in the top corner: name from sign-up or cache, else one optional GET /me."""
+        window = self.main_window
+        if not hasattr(window, "set_user_name"):
+            return
+        name = self._contact.get("name") or self.grace.contact().get("name", "")
+        window.set_user_name(name)
+        if name or not self.auth.access_token or self._profile_requested or self._in_grace:
+            return
+        self._profile_requested = True
+        self.client.get("/me", self._profile_loaded, access_token=self.auth.access_token)
+
+    def _profile_loaded(self, result):
+        self._profile_requested = False
+        data = result.data if isinstance(result.data, dict) else {}
+        name = data.get("name")
+        if (self._stopped or result.error or not 200 <= result.status < 300
+                or not isinstance(name, str) or not name.strip()):
+            return                                  # the greeting is optional: stay silent
+        self._contact["name"] = name.strip()[:200]
+        if self.main_window is not None and hasattr(self.main_window, "set_user_name"):
+            self.main_window.set_user_name(self._contact["name"])
 
     def _apply_license_state(self, offline=None):
         if not hasattr(self.main_window, "set_license_state"):

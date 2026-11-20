@@ -29,6 +29,8 @@ class ActivationWindow(QWidget):
         self.setMinimumWidth(460)
         self._busy = False
         self._session_mode = False
+        self._renewing = False
+        self._site_available = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 30, 30, 30)
         self.title = QLabel("Licença vencida")
@@ -37,10 +39,10 @@ class ActivationWindow(QWidget):
         self.intro = QLabel()
         self.intro.setWordWrap(True)
         layout.addWidget(self.intro)
-        plans = QLabel(PLANS_TEXT)
-        plans.setObjectName("muted")
-        plans.setWordWrap(True)
-        layout.addWidget(plans)
+        self.plans_text = QLabel(PLANS_TEXT)
+        self.plans_text.setObjectName("muted")
+        self.plans_text.setWordWrap(True)
+        layout.addWidget(self.plans_text)
         self.subscribe = QPushButton("Assinar")
         self.subscribe.setObjectName("primaryButton")
         layout.addWidget(self.subscribe)
@@ -90,7 +92,8 @@ class ActivationWindow(QWidget):
         return self._session_mode
 
     def set_payment_site(self, available):
-        self.plans.setVisible(available)
+        self._site_available = available
+        self.plans.setVisible(available and not self._renewing)
 
     def set_mode(self, *, session, cancelable=False, email="", trial_ended=False):
         self._session_mode = session
@@ -98,6 +101,11 @@ class ActivationWindow(QWidget):
             widget.setVisible(not session)
         self.back.setVisible(not session)
         self.cancel.setVisible(cancelable)
+        # Renewal from the account menu: only the key, nothing about subscribing.
+        self._renewing = cancelable
+        for widget in (self.subscribe, self.plans_text):
+            widget.setVisible(not cancelable)
+        self.plans.setVisible(self._site_available and not cancelable)
         self.title.setText("Renovar licença" if cancelable else
                            "Fim do período de teste" if trial_ended else "Licença vencida")
         self.intro.setText(

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QApplication
 
 from dtf_manager.models.license import LicenseInfo
@@ -58,20 +58,19 @@ class MainWindowLicenseTests(unittest.TestCase):
 
     def test_nothing_is_shown_before_the_first_validation(self):
         self.assertFalse(self.label().isVisible())
-        self.assertFalse(self.window.renew_button.isVisible())
+        self.assertFalse(self.window.greeting_label.isVisible())
 
     def test_regular_plan_shows_plan_and_days(self):
         self.window.set_license_state(info(dias_restantes=37))
         self.assertTrue(self.label().isVisible())
         self.assertEqual(self.label().text(), "Plano Mensal: 37 dias restantes")
         self.assertEqual(self.label().property("tone"), "normal")
-        self.assertFalse(self.window.renew_button.isVisible())
 
-    def test_trial_highlights_the_days_left_and_offers_renewal(self):
+    def test_trial_highlights_the_days_left_without_a_subscribe_button(self):
         self.window.set_license_state(info(plano="TESTE", dias_restantes=6))
         self.assertEqual(self.label().text(), "Período de teste: faltam 6 dias")
         self.assertEqual(self.label().property("tone"), "trial")
-        self.assertTrue(self.window.renew_button.isVisible())
+        self.assertFalse(hasattr(self.window, "renew_button"))   # subscribing lives in Conta
 
     def test_discreet_warning_with_seven_days_or_less(self):
         for days in [7, 1]:
@@ -79,15 +78,13 @@ class MainWindowLicenseTests(unittest.TestCase):
                 self.window.set_license_state(info(dias_restantes=days))
                 self.assertIn("vence em", self.label().text())
                 self.assertEqual(self.label().property("tone"), "warning")
-                self.assertTrue(self.window.renew_button.isVisible())
         self.window.set_license_state(info(dias_restantes=8))
-        self.assertFalse(self.window.renew_button.isVisible())
+        self.assertEqual(self.label().property("tone"), "normal")
 
     def test_lifetime_plan_has_no_days_and_no_warning(self):
         self.window.set_license_state(info(plano="VITALICIO", data_expiracao=None,
                                            dias_restantes=None, vitalicia=True))
         self.assertEqual(self.label().text(), "Plano Vitalício")
-        self.assertFalse(self.window.renew_button.isVisible())
 
     def test_offline_grace_is_a_visible_warning(self):
         self.window.set_license_state(info(), timedelta(hours=52))
@@ -100,6 +97,24 @@ class MainWindowLicenseTests(unittest.TestCase):
         self.window.set_license_state(None)
         self.assertFalse(self.label().isVisible())
 
+    def test_everything_lives_in_the_top_right_corner(self):
+        corner = self.window.menuBar().cornerWidget(Qt.Corner.TopRightCorner)
+        self.assertIsNotNone(corner)
+        for widget in (self.window.license_label, self.window.greeting_label,
+                       self.window.account_button, self.window.logout_button):
+            self.assertIs(widget.parentWidget(), corner)
+        self.assertEqual(self.window.logout_button.text(), "Sair da conta")
+
+    def test_greeting_uses_the_first_name_and_hides_when_unknown(self):
+        greeting = self.window.greeting_label
+        self.window.set_user_name("Maria da Silva")
+        self.assertEqual(greeting.text(), "Olá, Maria")
+        self.assertTrue(greeting.isVisible())
+        self.window.set_user_name("   ")
+        self.assertFalse(greeting.isVisible())
+        self.window.set_user_name(None)
+        self.assertEqual(greeting.text(), "")
+
     def test_account_menu_has_renewal_and_plans_that_reach_the_controller(self):
         received = []
         self.window.renew_requested.connect(lambda: received.append("renew"))
@@ -108,10 +123,7 @@ class MainWindowLicenseTests(unittest.TestCase):
         self.window.subscribe_action.trigger()
         self.window.renew_action.trigger()
         self.window.plans_action.trigger()
-        self.window.set_license_state(info(plano="TESTE", dias_restantes=3))
-        self.assertEqual(self.window.renew_button.text(), "Assinar")
-        self.window.renew_button.click()
-        self.assertEqual(received, ["subscribe", "renew", "site", "subscribe"])
+        self.assertEqual(received, ["subscribe", "renew", "site"])
         self.assertEqual([a.text() for a in self.window.account_button.menu().actions()],
                          ["Assinar...", "Renovar licença (inserir chave)...", "Ver planos no site..."])
         self.assertFalse(self.window.plans_action.isVisible())
