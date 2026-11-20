@@ -3,6 +3,7 @@ from PySide6.QtWidgets import QFrame, QLabel, QLineEdit, QPushButton, QVBoxLayou
 
 from dtf_manager.core.constants import APP_NAME
 from dtf_manager.core import auth_timing
+from dtf_manager.ui.cooldown import Cooldown
 
 
 class LoginWindow(QWidget):
@@ -20,6 +21,9 @@ class LoginWindow(QWidget):
         self.setObjectName("appRoot")
         self.setMinimumWidth(420)
         self._busy = False
+        self._cooldown = Cooldown(self)
+        self._cooldown.ticked.connect(self._cooldown_ticked)
+        self._cooldown.finished.connect(self._cooldown_finished)
         self._license_retry = False
         self._refresh_retry = False
         layout = QVBoxLayout(self)
@@ -67,7 +71,7 @@ class LoginWindow(QWidget):
         self.have_key.clicked.connect(self.activate_requested)
 
     def _submit(self):
-        if self._busy:
+        if self._busy or self._cooldown.active:
             return
         if not self._refresh_retry and not self._license_retry:
             auth_timing.start_login()
@@ -87,20 +91,34 @@ class LoginWindow(QWidget):
         self.password.clear()
         self.login_requested.emit(email, password)
 
+    def hold_retry(self, seconds):
+        """Keep the retry button disabled during the server Retry-After."""
+        self._cooldown.start(seconds)
+        self.enter.setEnabled(False)
+
+    def _cooldown_ticked(self, left):
+        self.enter.setText(f"Aguarde {left} s")
+
+    def _cooldown_finished(self):
+        self.enter.setEnabled(not self._busy)
+        self.enter.setText("Tentar novamente" if self._license_retry or self._refresh_retry else "Entrar")
+
     def set_busy(self, busy, text="Entrando..."):
         self._busy = busy
-        self.enter.setEnabled(not busy)
+        self.enter.setEnabled(not busy and not self._cooldown.active)
         retry = self._license_retry or self._refresh_retry
         self.email.setEnabled(not busy and not retry)
         self.password.setEnabled(not busy and not retry)
         self.new_login.setEnabled(not busy)
         for link in (self.register, self.have_key):
             link.setEnabled(not busy)
-        self.enter.setText(text if busy else ("Tentar novamente" if retry else "Entrar"))
+        if busy or not self._cooldown.active:
+            self.enter.setText(text if busy else ("Tentar novamente" if retry else "Entrar"))
         if busy:
             self.message.clear()
 
     def show_failure(self, message, *, retry_license=False, retry_refresh=False, allow_new_login=False):
+        self._cooldown.stop()     # a new outcome replaces any previous wait
         self._license_retry = retry_license
         self._refresh_retry = retry_refresh
         self.exit.setVisible(retry_license or retry_refresh)
@@ -123,5 +141,6 @@ class LoginWindow(QWidget):
 
     def closeEvent(self, event):
         self.password.clear()
+        self._cooldown.stop()
         self.closed.emit()
         super().closeEvent(event)

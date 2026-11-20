@@ -33,6 +33,7 @@ class FakeMain(QWidget):
         super().__init__()
         self.saves = 0
         self.states = []
+        self.notices = []
 
     def save_for_license_lock(self):
         self.saves += 1
@@ -43,6 +44,9 @@ class FakeMain(QWidget):
 
     def prepare_logout(self):
         return True
+
+    def show_license_notice(self, text):
+        self.notices.append(text)
 
     def set_payment_site(self, available):
         self.payment_site = available
@@ -508,13 +512,6 @@ class PeriodicValidationTests(LicenseFlowBase):
         self.assertEqual(self.main.saves, 1)
         self.assertFalse(self.main.isEnabled())
         self.assertIn("outro computador", self.controller.login_window.message.text())
-
-    def test_rate_limit_on_the_status_call_never_releases_a_blocked_window(self):
-        self.sign_in()
-        self.controller._periodic_check()
-        self.client.respond(http_error(429, "MUITAS_TENTATIVAS", retry_after=45))
-        self.assertIn("45 segundos", self.controller.login_window.message.text())
-        self.assertFalse(self.main.isEnabled())
 
 
 class OfflineGraceFlowTests(LicenseFlowBase):

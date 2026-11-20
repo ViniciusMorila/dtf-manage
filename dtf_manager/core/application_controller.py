@@ -8,7 +8,7 @@ from dtf_manager.core import auth_timing, config
 from dtf_manager.services.api_client import ApiClient
 from dtf_manager.services.api_failure import ApiFailure
 from dtf_manager.services.auth_service import AuthService
-from dtf_manager.services.error_messages import describe
+from dtf_manager.services.error_messages import describe, format_wait
 from dtf_manager.services.license_service import LicenseService
 from dtf_manager.services.license_store import LicenseStore
 from dtf_manager.models.license import LicenseInfo
@@ -18,6 +18,7 @@ from dtf_manager.services.whatsapp import build_message, build_url
 from dtf_manager.services.session_storage import SessionStorage, SessionStorageError
 
 LICENSE_CHECK_INTERVAL_MS = 60 * 60 * 1000   # periodic validation while the app is open
+THROTTLE_MAX_RETRIES = 3                     # automatic retries after a 429; then the hourly check
 DEFAULT_RETRY_AFTER = 60                      # seconds, when a 429 carries no Retry-After
 NEEDS_ACTIVATION = {"LICENCA_EXPIRADA", "LICENCA_NAO_ENCONTRADA"}
 REFUSED = {"LICENCA_BLOQUEADA", "MAQUINA_DIFERENTE", "MAQUINA_EM_USO", "ID_MAQUINA_INVALIDO"}
@@ -97,7 +98,11 @@ class ApplicationController(QObject):
         self._last_activation_key = None
         self._activation_retry_key = None
         self._register_with_key = False
+        self._throttle_retries = 0
         self._renewal = False
+        self._throttle_timer = QTimer(self)
+        self._throttle_timer.setSingleShot(True)
+        self._throttle_timer.timeout.connect(self._throttle_retry)
         self._license_timer = QTimer(self)
         self._license_timer.setInterval(license_interval_ms)
         self._license_timer.timeout.connect(self._periodic_check)
@@ -419,6 +424,11 @@ class ApplicationController(QObject):
         self._license_refreshed = False
         failure = self.auth.last_failure
         operation = self.auth.last_operation
+        if self._activation_retry_key and kind == "rate_limited":
+            # The refresh was throttled, not refused: the session is still valid.
+            self._activation_retry_key = None
+            self.activation_window.show_failure(describe(failure))
+            return
         if self._activation_retry_key:
             # Renewal with an expired access token whose refresh also failed.
             self._activation_retry_key = None
@@ -428,6 +438,9 @@ class ApplicationController(QObject):
             return
         self._pending_credentials = None
         restoring = operation == "refresh"
+        if restoring and kind == "rate_limited":
+            self._throttled(failure, "refresh")
+            return
         if restoring and kind == "unauthorized":
             # INVALID_REFRESH_TOKEN: ended by a login elsewhere, a block or a reset.
             failure = replace(failure, code="INVALID_REFRESH_TOKEN")
@@ -491,6 +504,7 @@ class ApplicationController(QObject):
             return
         self.grace.record_success(status, self._contact)
         self._in_grace = False
+        self._throttle_retries = 0
         self._license_status = status
         auth_timing.emit("license_to_main_window", license_checked)
         self._open_main_window()
@@ -520,12 +534,65 @@ class ApplicationController(QObject):
             self._license_refused(failure)
         elif failure.unreachable:
             self._try_grace(failure, retry="license")
+        elif failure.kind == "rate_limited":
+            self._throttled(failure, "license")
         else:
             message = (self._machine_message() if kind == "machine_id" else describe(failure))
             self._lock_main(message)
             self.login_window.show_failure(message, retry_license=kind != "machine_id",
                                            allow_new_login=True)
             self._show(self.login_window)
+
+    # ---- temporary throttling (HTTP 429) ---------------------------------------------
+
+    def _notify(self, text):
+        show = getattr(self.main_window, "show_license_notice", None)
+        if show is not None:
+            show(text)
+
+    def _throttled(self, failure, retry):
+        """429 on refresh or status: a temporary failure, never a refusal.
+
+        The session stays valid (a 429 does not consume the refresh token), the window is
+        not blocked and the cache is kept. The cached license is used while waiting when
+        the 72 hour grace allows it; the next attempt respects Retry-After.
+        """
+        self._busy = False
+        self._license_refreshed = False
+        wait = failure.retry_after or DEFAULT_RETRY_AFTER
+        notice = (f"Muitas tentativas ao validar a licença. Nova tentativa em {format_wait(wait)}. "
+                  "Sua sessão continua válida.")
+        window = self.main_window
+        if window is not None and window.isEnabled():
+            self._notify(notice)
+            self._schedule_throttle_retry(wait)
+            return
+        decision = self.grace.evaluate()
+        if decision.allowed:
+            self._in_grace = True
+            self._license_status = None
+            self._open_main_window(offline=decision)
+            self._notify(notice)
+            self._schedule_throttle_retry(wait)
+            return
+        message = describe(failure) + " Sua sessão continua válida."
+        self.login_window.show_failure(message, retry_license=retry == "license",
+                                       retry_refresh=retry == "refresh", allow_new_login=True)
+        self.login_window.hold_retry(wait)
+        self._show(self.login_window)
+
+    def _schedule_throttle_retry(self, wait):
+        # One retry per Retry-After, a few times at most; afterwards the hourly check takes over.
+        if self._throttle_retries >= THROTTLE_MAX_RETRIES:
+            return
+        self._throttle_retries += 1
+        self._throttle_timer.start(int(wait * 1000) + 500)
+
+    def _throttle_retry(self):
+        if (self._stopped or self._busy or self._logout_pending or self._session_locked
+                or self.main_window is None or not self.main_window.isEnabled()):
+            return
+        self.check_license()
 
     def _show_expired(self, failure):
         """License expired or missing: open the key screen (the API refused the login)."""
@@ -577,6 +644,7 @@ class ApplicationController(QObject):
     def _lock_main(self, reason):
         """Save the active operation, warn, then block the main window."""
         self._license_timer.stop()
+        self._throttle_timer.stop()
         window = self.main_window
         if window is None or not window.isEnabled():
             return
@@ -725,6 +793,12 @@ class ApplicationController(QObject):
             if hasattr(self.main_window, "cancel_logout"):
                 self.main_window.cancel_logout()
         parent = self.main_window or self.login_window
+        if kind == "rate_limited" and self.main_window is not None:
+            # Temporary: nothing was revoked and nothing was ended. Try signing out again later.
+            wait = self.auth.last_failure.retry_after or DEFAULT_RETRY_AFTER
+            self._notify(f"Muitas tentativas. Tente sair da conta novamente em {format_wait(wait)}. "
+                         "Você continua conectado.")
+            return
         if kind == "storage":
             message = "Não foi possível apagar ou acessar a sessão protegida do Windows. Tente sair da conta novamente."
             if self.auth.remote_logout_confirmed:
@@ -755,6 +829,8 @@ class ApplicationController(QObject):
         self._in_grace = False
         self._license_status = None
         self._license_timer.stop()
+        self._throttle_timer.stop()
+        self._throttle_retries = 0
         # Sign out removes the token and the license cache; the machine id is derived
         # from the hardware and is never stored, so it simply stays the same.
         self.grace.clear()
@@ -788,6 +864,7 @@ class ApplicationController(QObject):
             return
         self._stopped = True
         self._license_timer.stop()
+        self._throttle_timer.stop()
         self.license.cancel()
         self.auth.clear()
         self.client.cancel_all()

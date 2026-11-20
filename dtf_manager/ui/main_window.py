@@ -122,6 +122,10 @@ class MainWindow(QMainWindow):
     def set_payment_site(self, available):
         self.plans_action.setVisible(available)
 
+    def show_license_notice(self, text):
+        """Discreet, temporary notice in the status bar (never blocks the work)."""
+        self.statusBar().showMessage(text, 30000)
+
     def set_license_state(self, info, offline_remaining=None):
         """Show plan and days left. Called by the controller after each validation."""
         if info is None:
