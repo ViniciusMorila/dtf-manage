@@ -145,6 +145,16 @@ class MainWindowLicenseTests(unittest.TestCase):
         self.assertEqual(self.label().text(), "Plano Mensal: 37 dias restantes")
         self.assertFalse(self.window.greeting_label.isVisible())
 
+    def test_roll_footer_sits_at_the_bottom_of_the_editor(self):
+        self.window.show()
+        self.window.pages.setCurrentWidget(self.window.editor_page)
+        self.app.processEvents()
+        label = self.window.used_length_label
+        area = label.parentWidget()
+        top = label.mapTo(area, label.rect().topLeft()).y()
+        self.assertFalse(self.window.roll_canvas.isVisible())
+        self.assertGreater(top, area.height() - 40)     # the text itself, not a tall empty row
+
     def test_account_menu_has_renewal_and_plans_that_reach_the_controller(self):
         received = []
         self.window.renew_requested.connect(lambda: received.append("renew"))

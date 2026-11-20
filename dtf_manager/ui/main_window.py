@@ -800,6 +800,7 @@ class MainWindow(QMainWindow):
         canvas_layout.addWidget(self.roll_view, 1)
         layout.addWidget(canvas, 1)
         canvas.hide()
+        layout.addStretch(1)   # keeps the footer at the very bottom while the canvas is hidden
         footer = QHBoxLayout()
         self.used_length_label = QLabel("Comprimento utilizado: 0,00 m")
         footer.addWidget(self.used_length_label)
