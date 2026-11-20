@@ -255,7 +255,10 @@ real cobrado é combinado por você na conversa, e a duração do plano vem da c
 | `DTF_WHATSAPP_NUMBER` | `whatsapp_numero` de `app_config.json` | **Só sobrescrita para desenvolvimento.** Formato internacional, só dígitos. Valor inválido não cai no do pacote: a tela "Assinar" avisa e não abre link. |
 | `DTF_PLANS_FILE` | `dtf_manager/data/planos.json` | Arquivo de planos e preços alternativo (permite trocar preços sem recompilar). |
 | `DTF_PAYMENT_URL` | ausente | Opcional e secundário: página de compra no site, mostrada como "Ver planos no site". Só `https://`. |
-| `DTF_ALLOW_NO_AUTH` | ausente | Precisa ser `1` para o modo `--no-auth`. |
+| `DTF_ALLOW_NO_AUTH` | ausente | Precisa ser `1` para o modo `--no-auth`. Também libera as duas variáveis de desenvolvimento abaixo (sozinha, não desliga a autenticação). |
+| `DTF_ALLOW_DEV_OVERRIDES` | ausente | `1` libera as duas variáveis abaixo sem mexer em `--no-auth`. |
+| `DTF_MACHINE_ID_OVERRIDE` | ausente | **Só desenvolvimento.** Fixa o id de máquina (8 a 128 caracteres: `a-z 0-9 . _ : { } -`, o mesmo formato da API) para simular outro computador. Ignorada no executável e sem `DTF_ALLOW_NO_AUTH=1`/`DTF_ALLOW_DEV_OVERRIDES=1`. Valor malformado é recusado com mensagem, sem chamar a API. |
+| `DTF_VALIDATION_INTERVAL_SECONDS` | `3600` | **Só desenvolvimento.** Encurta o intervalo da validação periódica da licença (segundos, positivo). Mesmas condições da anterior; valor inválido volta ao padrão. |
 | `DTF_SUPPORT_CONTACT` | `contato_suporte` de `app_config.json` | **Só sobrescrita para desenvolvimento.** Anexado às mensagens que mandam falar com o suporte. |
 | `DTF_AUTH_TIMING` | ausente | `1` liga os tempos de diagnóstico (já existia). |
 
@@ -291,6 +294,91 @@ python app.py --no-auth
 
 Sem `DTF_ALLOW_NO_AUTH=1` o app recusa `--no-auth` e sai com código 2. O modo é
 ignorado no executável empacotado, mesmo com a variável.
+
+### Ambiente de teste de ponta a ponta (Windows/PowerShell)
+
+Tudo local e descartável: nada aqui toca a produção. O app guarda a sessão em
+`DTF Manager/session/dev-<hash>` quando `DTF_API_URL` não é a produção, então um
+token de teste nunca vai para a API real.
+
+**1. Postgres descartável.** Com Docker:
+
+```powershell
+docker run -d --name dtf-pg-teste -e POSTGRES_PASSWORD=teste -e POSTGRES_DB=dtf_teste -p 55432:5432 postgres:16
+# para apagar tudo no fim: docker rm -f dtf-pg-teste
+```
+
+Sem Docker, use os binários zip do PostgreSQL (sem serviço, sem instalador):
+
+```powershell
+$pg = "C:\pg16\bin"          # pasta bin dos binários descompactados
+& "$pg\initdb.exe" -D "$env:TEMP\dtf-pg" -U postgres -A trust
+& "$pg\pg_ctl.exe" -D "$env:TEMP\dtf-pg" -o "-p 55432" -l "$env:TEMP\dtf-pg.log" start
+& "$pg\createdb.exe" -h 127.0.0.1 -p 55432 -U postgres dtf_teste
+# no fim: pg_ctl stop e apagar a pasta $env:TEMP\dtf-pg
+```
+
+**2. API** (no projeto `dtf-manager-api`, numa janela do PowerShell que fica aberta).
+Os secrets precisam ter 32+ caracteres, sem espaços e sem palavras como
+`trocar`/`senha`/`secret`, mesmo fora de produção; gere aleatórios:
+
+```powershell
+cd ..\dtf-manager-api
+function Novo-Secret { -join ((48..57 + 65..90 + 97..122) | Get-Random -Count 40 | ForEach-Object { [char]$_ }) }
+$env:ENVIRONMENT = "development"
+$env:DATABASE_URL = "postgresql+psycopg://postgres:teste@127.0.0.1:55432/dtf_teste"   # sem senha no modo trust: ...postgres@127.0.0.1...
+$env:JWT_ACCESS_SECRET = Novo-Secret
+$env:JWT_REFRESH_SECRET = Novo-Secret
+$env:ACTIVATION_KEY_SECRET = Novo-Secret
+$env:ADMIN_EMAIL = "admin.teste@example.com"
+$env:ADMIN_SENHA = "AdminTeste123"       # mínimo 8, com letra e número
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe -m scripts.seed_plans
+.\.venv\Scripts\python.exe -m scripts.seed_admin
+Remove-Item Env:ADMIN_SENHA
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Confira `http://127.0.0.1:8000/health`. O painel administrativo é
+`http://127.0.0.1:8000/admin` (entre com `ADMIN_EMAIL` e a senha) e é onde se
+gera, cancela e bloqueia chaves. A conta admin é só para o painel: não use no app.
+
+**3. Manager** (outra janela, na pasta do `dtf-manage`):
+
+```powershell
+$env:DTF_API_URL = "http://127.0.0.1:8000"
+$env:DTF_ALLOW_DEV_OVERRIDES = "1"                  # libera as variáveis de desenvolvimento
+$env:DTF_MACHINE_ID_OVERRIDE = "pc-teste-01"        # troque para pc-teste-02 para "outro computador"
+$env:DTF_VALIDATION_INTERVAL_SECONDS = "20"         # valida a cada 20 s em vez de 1 h
+python app.py
+```
+
+Sem `--no-auth`: o fluxo é o real (cadastro, teste, chave, bloqueio). Receitas:
+
+- **Teste já usado:** cadastre no `pc-teste-01`; cadastre outra conta com o mesmo id
+  de máquina (ou o mesmo telefone) e veja `TESTE_JA_UTILIZADO` abrir o campo da chave.
+- **Chave:** gere em `/admin` (ou `POST /admin/chaves`) e use no cadastro ou em "Ativar chave".
+- **Outro computador:** feche o app, troque `DTF_MACHINE_ID_OVERRIDE` e abra de novo:
+  a API recusa a licença presa à outra máquina até o admin usar "resetar máquina".
+- **Bloqueio em uso:** bloqueie a licença no painel e espere até 20 s.
+
+**4. `app_config.json` e `planos.json` de exemplo não atrapalham.** O gate de
+release só roda no `build.ps1` (e em `python app.py --release-check`); o app em
+código-fonte abre normalmente com os arquivos de exemplo. A tela "Assinar" apenas
+avisa que o WhatsApp não está configurado. Para exercitá-la sem editar os arquivos
+versionados nem enfraquecer o gate:
+
+```powershell
+$env:DTF_WHATSAPP_NUMBER = "5511988887777"          # número válido que não é o de exemplo
+$env:DTF_SUPPORT_CONTACT = "suporte@teste.local"
+Copy-Item dtf_manager\data\planos.json "$env:TEMP\planos-teste.json"
+# edite "$env:TEMP\planos-teste.json": "exemplo": false
+$env:DTF_PLANS_FILE = "$env:TEMP\planos-teste.json"
+```
+
+Essas variáveis só valem na sessão do PowerShell e o gate continua lendo os
+arquivos embutidos; `build.ps1` segue bloqueando até você preencher os reais.
+Ao terminar: `Remove-Item Env:DTF_API_URL, Env:DTF_ALLOW_DEV_OVERRIDES, Env:DTF_MACHINE_ID_OVERRIDE, Env:DTF_VALIDATION_INTERVAL_SECONDS`.
 
 ## Gerar o executável
 
