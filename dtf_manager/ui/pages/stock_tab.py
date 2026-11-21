@@ -12,8 +12,8 @@ from dtf_manager.utils.stock_names import normalize_name
 
 NEGATIVE = QColor("#ff5a75")
 WARNING = QColor("#e69b45")
-HEADER_ROWS = 2                 # row 0: size name, row 1: Estoque / Futuro / Saldo
-KINDS = ("Estoque", "Futuro", "Saldo")
+HEADER_ROWS = 1                 # one header row: COR | TAM. | ESTOQUE | FUTURO | SALDO
+COLUMNS = ("COR", "TAM.", "ESTOQUE", "FUTURO", "SALDO")
 HEADER_BG = QColor("#100b0d")
 HEADER_FG = QColor("#c9bcc0")
 
@@ -177,53 +177,54 @@ class StockTab(QWidget):
         return item
 
     def _fill_matrix(self, snapshot) -> None:
-        """One table: colors down, and for each size three columns side by side
-        (Estoque | Futuro | Saldo)."""
+        """One block per color: the color box on the left spans one row per size, and each
+        size row shows Estoque | Futuro | Saldo."""
         table = self.matrix
         blocker = QSignalBlocker(table)
         table.clear()
         table.clearSpans()
-        table.setRowCount(HEADER_ROWS + len(snapshot.colors))
-        table.setColumnCount(1 + 3 * len(snapshot.sizes))
-        table.setItem(0, 0, self._header_item("COR"))
-        table.setSpan(0, 0, HEADER_ROWS, 1)
-        for index, size in enumerate(snapshot.sizes):
-            first = 1 + 3 * index
-            table.setItem(0, first, self._header_item(size.name))
-            table.setSpan(0, first, 1, 3)
-            for offset, kind in enumerate(KINDS):
-                table.setItem(1, first + offset, self._header_item(kind))
-        for row, color in enumerate(snapshot.colors, start=HEADER_ROWS):
+        sizes = snapshot.sizes
+        table.setRowCount(HEADER_ROWS + len(snapshot.colors) * len(sizes))
+        table.setColumnCount(len(COLUMNS))
+        for column, text in enumerate(COLUMNS):
+            table.setItem(0, column, self._header_item(text))
+        for block, color in enumerate(snapshot.colors):
+            first = HEADER_ROWS + block * len(sizes)
             background, text = shirt_colors(color.name)
-            label = self._header_item(f"●  {color.name}")
+            total = sum(snapshot.stock.get((color.id, size.id), 0) for size in sizes)
+            label = self._header_item(f"●  {color.name}\n{total} em estoque")
             label.setBackground(QBrush(background))
             label.setForeground(QBrush(text))
             label.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-            table.setItem(row, 0, label)
-            for index, size in enumerate(snapshot.sizes):
+            table.setItem(first, 0, label)
+            table.setSpan(first, 0, len(sizes), 1)
+            for offset, size in enumerate(sizes):
+                row = first + offset
                 key = (color.id, size.id)
                 stock, future = snapshot.stock.get(key, 0), snapshot.future.get(key, 0)
-                for offset, value in enumerate((stock, future, stock - future)):
+                name = self._header_item(size.name)
+                table.setItem(row, 1, name)
+                for kind, value in enumerate((stock, future, stock - future)):
                     item = QTableWidgetItem(str(value))
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    if offset > 0:
+                    if kind > 0:
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    if offset == 1 and value > 0:
+                    if kind == 1 and value > 0:
                         item.setForeground(QBrush(WARNING))
-                    if offset == 2 and value < 0:
+                    if kind == 2 and value < 0:
                         item.setForeground(QBrush(NEGATIVE))
                         item.setBackground(QBrush(QColor("#3a0d17")))
                         item.setToolTip("Saldo negativo: faltam camisetas para os pedidos.")
-                    table.setItem(row, 1 + 3 * index + offset, item)
+                    table.setItem(row, 2 + kind, item)
+                table.setRowHeight(row, 34)
         header = table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        table.setColumnWidth(0, 130)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        table.setColumnWidth(0, 170)
+        table.setColumnWidth(1, 70)
         table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         table.setRowHeight(0, 28)
-        table.setRowHeight(1, 24)
-        for row in range(HEADER_ROWS, table.rowCount()):
-            table.setRowHeight(row, 52)
         del blocker
 
     def _fill_separation(self, snapshot) -> None:
@@ -273,13 +274,11 @@ class StockTab(QWidget):
 
     # ---- user edits ------------------------------------------------------------------
     def _stock_item_changed(self, item) -> None:
-        if self._rendering or item.row() < HEADER_ROWS or item.column() < 1:
-            return
-        size_index, kind = divmod(item.column() - 1, 3)
-        if kind != 0:                       # only the Estoque column is editable
-            return
+        if self._rendering or item.row() < HEADER_ROWS or item.column() != 2:
+            return                          # only the Estoque column is editable
+        color_index, size_index = divmod(item.row() - HEADER_ROWS, len(self._size_ids))
         self.stock_edit_requested.emit(
-            self._color_ids[item.row() - HEADER_ROWS], self._size_ids[size_index], item.text())
+            self._color_ids[color_index], self._size_ids[size_index], item.text())
 
     def _separated_item_changed(self, item) -> None:
         if self._rendering or item.column() != 5:

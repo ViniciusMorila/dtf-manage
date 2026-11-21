@@ -112,20 +112,21 @@ class ControllerBase(unittest.TestCase):
     def cell(self, kind, color, size):
         """kind: "stock" | "future" | "balance" -> the item in the single matrix table."""
         snap = self.service.snapshot()
-        row = [c.name for c in snap.colors].index(color) + 2
-        column = 1 + 3 * [s.name for s in snap.sizes].index(size) + ("stock", "future", "balance").index(kind)
-        return self.tab.matrix.item(row, column)
+        row = (1 + [c.name for c in snap.colors].index(color) * len(snap.sizes)
+               + [s.name for s in snap.sizes].index(size))
+        return self.tab.matrix.item(row, 2 + ("stock", "future", "balance").index(kind))
 
 
 class TabTests(ControllerBase):
-    def test_one_table_with_stock_future_and_balance_side_by_side(self):
+    def test_one_block_per_color_with_the_sizes_stacked(self):
         matrix = self.tab.matrix
-        self.assertEqual(matrix.rowCount(), 2 + 4)                 # 2 header rows + colors
-        self.assertEqual(matrix.columnCount(), 1 + 3 * 4)          # color + 3 per size
-        self.assertEqual([matrix.item(1, c).text() for c in (1, 2, 3)],
-                         ["Estoque", "Futuro", "Saldo"])
-        self.assertEqual(matrix.item(0, 1).text(), "P")
-        self.assertEqual(matrix.columnSpan(0, 1), 3)
+        self.assertEqual(matrix.rowCount(), 1 + 4 * 4)             # header + 4 colors x 4 sizes
+        self.assertEqual(matrix.columnCount(), 5)
+        self.assertEqual([matrix.item(0, c).text() for c in range(5)],
+                         ["COR", "TAM.", "ESTOQUE", "FUTURO", "SALDO"])
+        self.assertEqual([matrix.item(r, 1).text() for r in range(1, 5)], ["P", "M", "G", "GG"])
+        self.assertEqual(matrix.rowSpan(1, 0), 4)                  # the color box covers its sizes
+        self.assertEqual([matrix.item(r, 1).text() for r in range(5, 9)], ["P", "M", "G", "GG"])
         for kind in ("stock", "future", "balance"):
             self.assertEqual(self.cell(kind, "Preta", "G").text(), "0")
         self.service.bulk_add(2)
@@ -143,9 +144,11 @@ class TabTests(ControllerBase):
     def test_color_column_is_painted_with_the_shirt_color(self):
         from dtf_manager.ui.pages.stock_tab import shirt_colors
         matrix = self.tab.matrix
-        names = [matrix.item(r, 0).text() for r in range(2, 6)]
+        starts = (1, 5, 9, 13)
+        names = [matrix.item(r, 0).text().splitlines()[0] for r in starts]
         self.assertEqual(names, ["●  Preta", "●  Marrom", "●  Bege", "●  Branca"])
-        for row, color in enumerate(("Preta", "Marrom", "Bege", "Branca"), start=2):
+        self.assertIn("0 em estoque", matrix.item(1, 0).text())
+        for row, color in zip(starts, ("Preta", "Marrom", "Bege", "Branca")):
             self.assertEqual(matrix.item(row, 0).background().color(), shirt_colors(color)[0])
         self.assertNotEqual(shirt_colors("Preta")[0], shirt_colors("Branca")[0])
 
@@ -162,17 +165,17 @@ class TabTests(ControllerBase):
     def test_new_color_and_size_refuse_duplicates(self):
         self.prompts.names = ["Azul"]
         self.controller.new_color()
-        self.assertEqual(self.tab.matrix.rowCount(), 2 + 5)
+        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 4)
         self.prompts.names = ["PRETA"]
         self.controller.new_color()
-        self.assertEqual(self.tab.matrix.rowCount(), 2 + 5)
+        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 4)
         self.assertEqual(len(self.prompts.warnings), 1)
         self.prompts.names = ["xg"]
         self.controller.new_size()
-        self.assertEqual(self.tab.matrix.columnCount(), 1 + 3 * 5)
+        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 5)
         self.prompts.names = [None]
         self.controller.new_size()                                       # cancelled
-        self.assertEqual(self.tab.matrix.columnCount(), 1 + 3 * 5)
+        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 5)
 
     def test_bulk_add_through_the_controller(self):
         self.prompts.bulk_answer = (3, self.colors["Bege"], None)
