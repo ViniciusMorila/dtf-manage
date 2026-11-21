@@ -150,6 +150,35 @@ class DeleteColorTests(unittest.TestCase):
         self.assertEqual(len(prep.lines), 1)
 
 
+class CancelImportTests(unittest.TestCase):
+    def setUp(self):
+        self.service, _ = make_service()
+        self.service.bulk_add(10)
+
+    def test_cancelling_drops_the_future_and_lets_the_same_file_come_back_clean(self):
+        orders = [make_order("A", ("Preta,G", 3), ("P - M", 1, "S"))]
+        do_import(self.service, orders, file_hash="h")
+        self.assertTrue(self.service.cancel_current_import())
+        snap = self.service.snapshot()
+        self.assertFalse(snap.has_future)
+        self.assertEqual(snap.pending, ())
+        self.assertEqual(stock_of(self.service, "Preta", "G"), 10)        # stock untouched
+        self.assertIsNone(self.service.check_duplicate("h", ["A"]))        # no "already imported"
+        self.assertEqual(self.service.imports(), [])
+        do_import(self.service, orders, file_hash="h")                      # from zero again
+        self.assertEqual(future_of(self.service, "Preta", "G"), 3)
+        notes = [m.note for m in self.service.movements() if m.scope == "futuro"]
+        self.assertIn("Operação cancelada", notes)
+
+    def test_nothing_to_cancel_without_an_import_or_after_finalizing(self):
+        self.assertFalse(self.service.cancel_current_import())
+        do_import(self.service, [make_order("A", ("Preta,G", 3))], file_hash="h")
+        self.service.finalize()
+        self.assertFalse(self.service.cancel_current_import())             # stays protected
+        self.assertIsNotNone(self.service.check_duplicate("h", ["A"]))
+        self.assertEqual(stock_of(self.service, "Preta", "G"), 7)
+
+
 class BackupTests(unittest.TestCase):
     def test_existing_database_is_copied_once_before_the_stock_migration(self):
         folder = Path(tempfile.mkdtemp())

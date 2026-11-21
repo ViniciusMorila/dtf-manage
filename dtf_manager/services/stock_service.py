@@ -463,6 +463,28 @@ class StockService:
             repo.set_state("import_note", "", db=db)
         return FinalizeSummary(tuple(rows), sum(p.quantity for p in pending))
 
+    def cancel_current_import(self) -> bool:
+        """The user cancelled the operation: drops the futuro and the record of that spreadsheet
+        so the file can be imported again as if it never was. Stock is untouched. Nothing is
+        done when the import was already finalized (its orders stay protected)."""
+        repo = self.repository
+        with repo.tx() as db:
+            import_id = repo.get_state("current_import_id", db=db)
+            record = repo.get_import(int(import_id), db=db) if import_id else None
+            if record is None or record.finalized_at:
+                return False
+            names = self._names(db)
+            for (cid, sid), (quantity, _) in sorted(repo.future(db).items()):
+                repo.add_movement(MOVEMENT_IMPORT, "futuro", names[0][cid], names[1][sid],
+                                  quantity, 0, note="Operação cancelada", db=db)
+            repo.replace_future({}, db=db)
+            repo.replace_pending([], db=db)
+            repo.delete_import(record.id, db=db)
+            for key in ("current_import_id", "signature", "import_note"):
+                repo.set_state(key, "", db=db)
+            repo.set_state("counted_orders", "[]", db=db)
+        return True
+
     # ---- history -----------------------------------------------------------------------------------
     def movements(self, limit: int = 1000):
         return self.repository.movements(limit)

@@ -200,6 +200,10 @@ class StockRepository:
                 (now_text(), file_name, file_hash, len(orders),
                  json.dumps(list(orders)))).lastrowid
 
+    def delete_import(self, import_id: int, db=None) -> None:
+        with self.tx(db) as c:
+            c.execute("DELETE FROM stock_imports WHERE id=?", (import_id,))
+
     def mark_import_finalized(self, import_id: int, at: str, db=None) -> None:
         with self.tx(db) as c:
             c.execute("UPDATE stock_imports SET finalized_at=? WHERE id=?", (at, import_id))

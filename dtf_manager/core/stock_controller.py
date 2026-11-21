@@ -178,6 +178,12 @@ class StockController(QObject):
             self.prompts.info("Estoque: importação", "\n".join(notes))
         return True
 
+    def cancel_import(self) -> bool:
+        """The operation was cancelled: forget its futuro and its import record."""
+        done = self.service.cancel_current_import()
+        self.refresh()
+        return done
+
     # ---- finalize ----------------------------------------------------------------------
     @property
     def busy(self) -> bool:

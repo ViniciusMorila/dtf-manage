@@ -17,6 +17,8 @@ class ProjectSettingsPanel(QFrame):
     import_orders_requested = Signal()
     link_memory_requested = Signal()
     continue_operation_requested = Signal()
+    cancel_operation_requested = Signal()
+    finalize_operation_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -53,6 +55,20 @@ class ProjectSettingsPanel(QFrame):
         continue_operation.setObjectName("primaryButton")
         continue_operation.clicked.connect(self.continue_operation_requested)
         active_layout.addWidget(continue_operation)
+        end_row = QHBoxLayout()
+        end_row.setSpacing(8)
+        self.cancel_operation_button = QPushButton("CANCELAR")
+        self.cancel_operation_button.setObjectName("removeButton")
+        self.cancel_operation_button.setToolTip(
+            "Descarta esta planilha: você poderá carregá-la de novo e começar do zero.")
+        self.cancel_operation_button.clicked.connect(self.cancel_operation_requested)
+        self.finalize_operation_button = QPushButton("FINALIZAR")
+        self.finalize_operation_button.setToolTip(
+            "Encerra o trabalho: dá baixa no estoque de camisetas e zera o futuro.")
+        self.finalize_operation_button.clicked.connect(self.finalize_operation_requested)
+        end_row.addWidget(self.cancel_operation_button)
+        end_row.addWidget(self.finalize_operation_button)
+        active_layout.addLayout(end_row)
         self.active_operation_card.hide()
         layout.addWidget(self.active_operation_card)
         folder_title = QLabel("PASTA DAS ARTES")

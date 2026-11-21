@@ -146,3 +146,18 @@ Testes: `tests/test_stock_service.py` (regras, sem Qt) e `tests/test_stock_ui.py
 - **Janela de validação:** mostra a imagem do produto (o link `Link da Imagem` da planilha, baixado em segundo plano;
   sem imagem aparece "sem imagem") e pergunta só a **cor**. Os seletores de tamanho só aparecem quando alguma linha
   não tem tamanho legível.
+
+## Cartão "Operação em andamento": Cancelar e Finalizar
+
+Além de **Continuar**, o cartão tem dois botões:
+
+- **Cancelar:** descarta o trabalho daquela planilha. Pede confirmação, tira os pedidos do projeto, apaga a operação
+  salva e zera o futuro e os pendentes dela. O estoque **não muda**. O registro daquela importação também é apagado,
+  então dá para carregar a mesma planilha de novo, sem aviso de "já importada", e começar do zero. O histórico
+  registra o futuro zerado como "Operação cancelada". Se a importação já tinha sido finalizada, o cancelamento não
+  desfaz nada e os pedidos continuam protegidos.
+- **Finalizar:** dá baixa no estoque de camisetas e zera o futuro (mesmo resumo e confirmação do botão
+  "Finalizar pedido"), e encerra a operação: ela some do cartão e os pedidos saem do projeto. Se não houver nada no
+  futuro, pergunta se deseja encerrar mesmo assim.
+
+As abas (DTF, Estoque de camisetas, Estoque de estampas) ficam centralizadas no topo da janela.

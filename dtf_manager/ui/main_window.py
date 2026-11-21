@@ -208,7 +208,7 @@ class MainWindow(QMainWindow):
         """DTF (the existing pages, unchanged) + the two stock tabs."""
         self.main_tabs = QTabWidget()
         self.main_tabs.setObjectName("mainTabs")
-        self.main_tabs.setDocumentMode(True)
+        self.main_tabs.setDocumentMode(False)      # the QSS centers the tab bar
         self.main_tabs.addTab(self.pages, "DTF")
         self.stock_tab = StockTab()
         self.stock_controller = StockController(
@@ -251,6 +251,8 @@ class MainWindow(QMainWindow):
         settings.set_finalize_enabled(self.stock_controller.has_future)
         settings.link_memory_requested.connect(self._open_link_memory)
         settings.continue_operation_requested.connect(self._continue_active_operation)
+        settings.cancel_operation_requested.connect(self._cancel_active_operation)
+        settings.finalize_operation_requested.connect(self._finalize_active_operation)
         main_layout.addWidget(settings)
         main_layout.addWidget(self._build_roll_area(), 1)
         artwork = ArtworkPanel()
@@ -412,6 +414,62 @@ class MainWindow(QMainWindow):
         decision, self._pending_stock_import = self._pending_stock_import, None
         if decision is not None:
             self.stock_controller.apply_import(decision)
+
+    def _end_active_operation(self) -> None:
+        """Forgets the active operation and the orders loaded for it (project back to empty)."""
+        self.active_operation_repository.clear_active()
+        self.active_operation = None
+        self._restoring_operation = True
+        try:
+            self.order_import_state.replace_orders([])
+        finally:
+            self._restoring_operation = False
+        self._pending_stock_import = None
+        self._refresh_active_operation_card()
+        self.pages.setCurrentWidget(self.editor_page)
+
+    def _cancel_active_operation(self) -> None:
+        """Cancel: drops this spreadsheet's work so it can be imported again from zero."""
+        operation = self.active_operation
+        if operation is None:
+            return
+        answer = QMessageBox.question(
+            self, "Cancelar operação",
+            f"Cancelar esta operação ({operation.metadata.order_count} pedidos)?\n\n"
+            "Os pedidos saem do projeto, os vínculos feitos nela são descartados e o futuro de "
+            "camisetas dessa planilha é zerado. O estoque não muda. Você poderá importar a "
+            "planilha de novo e começar do zero.")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._end_active_operation()
+        except ActiveOperationStorageError as error:
+            QMessageBox.warning(self, "Operação em andamento", str(error))
+            return
+        self.stock_controller.cancel_import()
+        self.statusBar().showMessage(
+            "Operação cancelada. Você pode importar a planilha de novo.", 9000)
+
+    def _finalize_active_operation(self) -> None:
+        """Finalize: deducts the shirts from the stock, zeroes the futuro and closes the work."""
+        if self.active_operation is None:
+            return
+        if self.stock_controller.has_future:
+            if not self.stock_controller.finalize():
+                return                                   # declined (or nothing was deducted)
+        else:
+            answer = QMessageBox.question(
+                self, "Finalizar operação",
+                "Não há camisetas no futuro para dar baixa no estoque. "
+                "Finalizar mesmo assim e encerrar esta operação?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            self._end_active_operation()
+        except ActiveOperationStorageError as error:
+            QMessageBox.warning(self, "Operação em andamento", str(error))
+            return
+        self.statusBar().showMessage("Operação finalizada e estoque atualizado.", 9000)
 
     def _open_production_history(self) -> None:
         self.production_history_page.pages.setCurrentIndex(0)

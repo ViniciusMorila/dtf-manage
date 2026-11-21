@@ -113,6 +113,7 @@ QDialogButtonBox QPushButton { min-width: 96px; padding: 8px 13px; }
 QDialogButtonBox QPushButton#primaryButton { min-width: 132px; }
 QProgressBar { color: #e9dfe1; background: #0a0809; border: 1px solid #3d141c; border-radius: 5px; text-align: center; }
 QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #72162d, stop:1 #d52c4d); border-radius: 4px; }
+QTabWidget#mainTabs::tab-bar { alignment: center; }
 QTabWidget#mainTabs::pane { border: 0; background: #030304; }
 QTabWidget#mainTabs > QTabBar::tab { background: transparent; color: #8f8587; padding: 9px 22px; border: 0; border-bottom: 2px solid transparent; font-weight: 700; }
 QTabWidget#mainTabs > QTabBar::tab:selected { color: #f7f2f3; border-bottom: 2px solid #d52c4d; }
