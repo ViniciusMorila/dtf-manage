@@ -93,8 +93,12 @@ class ArtStockController(QObject):
     def recalculate(self, reset_marks: bool = False) -> bool:
         """Replaces the arts futuro with the copies of the linked items of the counted orders.
         Skipped while no order is loaded (cancel/finalize clear the futuro on their own)."""
-        if not list(self._orders()):
+        loaded = list(self._orders())
+        if not loaded:
             return False
+        counted = json.loads(self.service.stock_repository.get_state("counted_orders", "[]") or "[]")
+        if counted and not ({o.platform_order_number for o in loaded} & set(counted)):
+            return False        # the loaded orders are not the ones the stock import counted
         count = count_art_copies(self.counted_orders())
         self.service.replace_future(count, reset_marks=reset_marks)
         self.refresh()
@@ -166,7 +170,10 @@ class ArtStockController(QObject):
         if self._scanner is None:
             return
         repo = self.service.repository
-        self._scanner.start(self.service.present_files(), repo.hashes(), repo.save_hashes)
+        try:
+            self._scanner.start(self.service.present_files(), repo.hashes(), repo.save_hashes)
+        except Exception:           # only a warning feature: never an error on screen
+            return
 
     def _identical_found(self, groups) -> None:
         self.identical_groups = list(groups)

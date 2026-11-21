@@ -161,3 +161,102 @@ Além de **Continuar**, o cartão tem dois botões:
   futuro, pergunta se deseja encerrar mesmo assim.
 
 As abas (DTF, Estoque de camisetas, Estoque de estampas) ficam centralizadas no topo da janela.
+
+# Estoque de estampas
+
+A terceira aba, **Estoque de estampas**, controla quantas cópias de cada arte (arquivo de imagem) existem em estoque
+e quantas o pedido importado vai usar. Mesmo layout da aba de camisetas: três cartões no topo, a lista à esquerda e a
+**Separação** à direita.
+
+## A lista da esquerda
+
+- Mostra **todas** as artes da **Pasta das artes** escolhida na aba DTF (busca recursiva; png, jpg, jpeg e webp).
+  A listagem é leve: só pela extensão, sem abrir cada imagem (o `scan_art_directory` da vinculação automática não
+  foi alterado). Uma imagem corrompida aparece sem miniatura, com um aviso discreto.
+- Colunas: **Imagem**, **Arquivo**, **Estoque** (inteiro ≥ 0, editável na célula; Tab/Enter/Esc como na aba de
+  camisetas), **Futuro** e **Saldo** (= Estoque − Futuro; vermelho quando negativo, zero apagado).
+- **Cada arte aparece uma única vez.** A identidade da arte é o **arquivo**: o caminho relativo dentro da pasta
+  selecionada. SKUs, variações e tamanhos diferentes que usam a mesma imagem **somam** no mesmo registro; nunca há
+  linha por SKU ou tamanho. Artes vinculadas manualmente a um arquivo **fora da pasta** entram com chave pelo
+  caminho absoluto e a marca "fora da pasta".
+- Busca pelo nome do arquivo (sem acento, sem diferenciar maiúsculas) e filtros **Só com futuro** e **Só com falta**.
+- Cartões: **Total em estoque**, **Total no pedido** (soma do futuro) e **Faltam** (`X de Y`, vermelho quando X > 0).
+- Se a pasta muda ou é atualizada, a lista é atualizada (também ao abrir a aba). Um arquivo que **sumiu** da pasta
+  mas tem estoque registrado fica marcado "arquivo não encontrado" e **nunca é apagado do banco**.
+
+### Miniaturas
+
+Carregadas sob demanda: só as linhas visíveis (mais uma margem) são pedidas, por threads em segundo plano, lendo a
+imagem já reduzida (`QImageReader`), com cache LRU em memória. A interface não trava mesmo com centenas de
+imagens. Quem falha ao carregar fica registrado e não é tentado de novo.
+
+### Arquivos com conteúdo idêntico
+
+Em segundo plano, com prioridade baixa e **só depois** de a lista aparecer (1,5 s), o app procura arquivos com o
+mesmo conteúdo e nomes diferentes. Só os de mesmo tamanho são comparados por hash SHA-256, com cache por
+(caminho, tamanho, data). O resultado é um aviso discreto; **nada é unido**.
+
+### Mover estoque (renomeações e trocas de pasta)
+
+- **Mover estoque para outro arquivo:** escolhe o arquivo de origem (com estoque) e o de destino; pede confirmação
+  e move todo o estoque. As duas pontas entram no histórico.
+- **Sugerir correspondências** (só aparece quando há arquivo "não encontrado" com estoque): propõe pares pelo
+  **mesmo nome de arquivo** (nomes que casam com mais de um arquivo ficam de fora). Você marca um a um ou todos e só
+  então o estoque é movido. Nunca move sozinho.
+
+## O futuro das estampas
+
+Vem da planilha importada, **depois** da vinculação item → arte (automática, manual ou memória de vínculos):
+
+- Cópias por item = `quantidade do pedido × copias_per_product` de cada arte vinculada, **a mesma fórmula** da
+  montagem do rolo (`art_copies`, usada por `build_dtf_print_plan` e por `count_art_copies`). Tamanhos de camiseta
+  não entram na conta; um kit é uma lista de artes (ou `copies_per_product` maior). O rolo mantém o mesmo arquivo em
+  dimensões diferentes como entradas separadas; o estoque **soma por arquivo**, ignorando dimensões.
+- É **recalculado toda vez que os vínculos mudam**, sempre **substituindo** (nunca acumulando). No histórico entra só
+  o **resultado líquido** de cada recálculo: uma linha por arte cujo futuro mudou, não uma por vínculo.
+- Usa a **mesma lista de pedidos contados** do estoque de camisetas: planilha repetida e pedidos já finalizados
+  são tratados pelas mesmas proteções (a janela de aviso da importação vale para os dois).
+- Itens **sem arte vinculada** ficam fora da conta, aparecem no aviso "N itens sem arte vinculada" com o atalho
+  **Abrir vinculação manual** e não bloqueiam nada.
+- As marcas de "separado" sobrevivem aos recálculos e são zeradas por uma nova importação.
+- Se os pedidos carregados não são os da importação atual do estoque (por exemplo, a validação foi cancelada), o
+  recálculo não mexe no futuro.
+
+## Separação (direita)
+
+Uma linha por arte que aparece na planilha: miniatura, arquivo, **Usada** (o futuro), **Estoque** (✓ quando cobre
+tudo; ✗ vermelho quando falta, com a dica "Faltam N") e a caixa **Separado**. Estado vazio centralizado. O botão
+**Copiar lista do que falta** copia o arquivo e a quantidade que falta; fica desabilitado quando não falta nada.
+
+## Finalizar pedido
+
+O botão existente passa a abater **camisetas e estampas na mesma transação**: ou grava as duas partes ou nenhuma.
+O resumo é único (camisetas e estampas); itens com falta, em qualquer das duas, exigem a confirmação explícita. O
+estoque nunca fica negativo (limita em 0 e registra a falta no histórico) e depois o futuro de estampas e as marcas
+de "separado" são zerados. **Cancelar** a operação zera os dois futuros e não mexe nos estoques. Também funciona
+quando só as estampas têm futuro.
+
+## Histórico e banco
+
+- Cada movimento de estampa (ajuste manual, importação/recálculo, finalização, mover estoque) entra no mesmo
+  histórico, com data e hora, arquivo (na coluna **Cor / Arquivo**), quantidade, antes e depois. A coluna **Produto**
+  distingue Camiseta de Estampa.
+- Migração **aditiva** no mesmo SQLite: tabelas novas `stock_art_files`, `stock_art_levels`, `stock_art_future` e
+  `stock_art_hashes`, e a coluna `produto` (padrão `camiseta`) em `stock_movements` por `ALTER TABLE ... ADD COLUMN`.
+  Nada existente é alterado.
+- **Cópia de segurança:** antes da migração o banco é copiado ao lado como `dtf_manager.db.antes-das-estampas.bak`
+  (uma vez só, sem sobrescrever; a primeira cópia, `.antes-do-estoque.bak`, continua valendo para quem vem de antes
+  do estoque de camisetas).
+
+## Código
+
+| Arquivo | Papel |
+|---|---|
+| `dtf_manager/services/art_folder_listing.py` | listagem leve da pasta |
+| `dtf_manager/services/art_stock_repository.py` / `art_stock_service.py` | SQL e regras (uma arte por arquivo, futuro, finalizar, mover) |
+| `dtf_manager/services/art_duplicates.py` | arquivos idênticos (hash só dos de mesmo tamanho) |
+| `dtf_manager/services/thumbnail_cache.py` | miniaturas preguiçosas e a varredura de idênticos em segundo plano |
+| `dtf_manager/services/print_plan_service.py` | `art_copies` e `count_art_copies` |
+| `dtf_manager/core/art_stock_controller.py` | decide; a UI não chama serviços |
+| `dtf_manager/ui/pages/art_stock_tab.py` | a aba |
+| `tests/test_art_stock.py`, `tests/test_art_stock_ui.py` | testes |
