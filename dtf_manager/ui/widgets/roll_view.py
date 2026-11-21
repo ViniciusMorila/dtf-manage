@@ -11,6 +11,7 @@ class RollView(QGraphicsView):
 
     used_length_changed = Signal(float)
     selected_copy_removed = Signal(str, int)
+    artwork_selected = Signal(str)        # roll key of the selected art ('' when nothing is)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -187,10 +188,14 @@ class RollView(QGraphicsView):
     def artwork_quantity(self, file_path: str) -> int:
         return len(self._artwork_items.get(file_path, ()))
 
-    def select_artwork(self, file_path: str) -> None:
+    def select_artwork(self, file_path: str, center: bool = False) -> None:
+        """Selects every copy of the art; with `center`, scrolls the roll to show the first one."""
         self.scene().clearSelection()
-        for item in self._artwork_items.get(file_path, []):
+        items = self._artwork_items.get(file_path, [])
+        for item in items:
             item.setSelected(True)
+        if center and items:
+            self.centerOn(items[0])
         self._selection_changed()
 
     def regroup_artworks(self) -> None:
@@ -199,12 +204,19 @@ class RollView(QGraphicsView):
         self.scene().clearSelection()
         self._repack_artworks()
 
+    def _selected_roll_key(self, selected_items) -> str:
+        for file_path, items in self._artwork_items.items():
+            if any(item in selected_items for item in items):
+                return file_path
+        return ""
+
     def _selection_changed(self) -> None:
         selected_items = [
             item
             for item in self.scene().selectedItems()
             if isinstance(item, QGraphicsPixmapItem)
         ]
+        self.artwork_selected.emit(self._selected_roll_key(selected_items))
         if not selected_items:
             self.action_bar.hide()
             return

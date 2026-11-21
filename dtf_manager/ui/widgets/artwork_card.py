@@ -12,6 +12,7 @@ class ArtworkCard(QFrame):
     quantity_changed = Signal(int)
     remove_requested = Signal(object)
     selection_requested = Signal(object)
+    locate_requested = Signal(object)        # double click: show it on the roll
 
     def __init__(self, name: str, sku: str, width_cm: float, height_cm: float, quantity: int, file_path: Path | None = None, parent=None):
         super().__init__(parent)
@@ -99,6 +100,11 @@ class ArtworkCard(QFrame):
 
     def _emit_dimensions(self) -> None:
         self.dimensions_changed.emit(self.width_input.value(), self.height_input.value())
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self.file_path:
+            self.locate_requested.emit(self)
+        super().mouseDoubleClickEvent(event)
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self.file_path:

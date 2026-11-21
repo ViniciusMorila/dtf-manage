@@ -668,6 +668,94 @@ class MainWindowArtTests(unittest.TestCase):
         self.assertFalse(window.settings.finalize_button.isEnabled())
         self.assertFalse(arts.has_future)
 
+    def _clean_roll(self):
+        window = self.window
+        window.order_import_state.replace_orders([])
+        window.stock_controller.service.repository.set_state("counted_orders", "[]")
+        window.art_controller.clear_manual()
+        window._clear_roll_project()
+        self.app.processEvents()
+
+    def test_arts_added_by_hand_on_the_roll_join_the_art_futuro_and_leave_with_the_finalize(self):
+        window = self.window
+        window.settings.folder_selected.emit(self.art_folder)
+        self._clean_roll()
+        arts, shirts, panel = window.art_controller, window.stock_controller, window.artwork_panel
+        arts.service.set_stock(row_of(arts.service, "a.png").art_id, "5")
+        panel.add_configured_artwork(self.a, 5, 5, 3, manual=True)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertEqual(row_of(arts.service, "a.png").future, 3)
+        panel._artwork_cards[0].quantity_input.setValue(4)                      # changed on the card
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertEqual(row_of(arts.service, "a.png").future, 4)
+        self.assertTrue(window.settings.finalize_button.isEnabled())
+        self.assertTrue(shirts.finalize())
+        self.assertEqual(row_of(arts.service, "a.png").stock, 1)
+        self.assertEqual(row_of(arts.service, "a.png").future, 0)
+        self.assertEqual(panel.manual_copies(), {})                             # settled: not counted twice
+        self._clean_roll()
+
+    def test_removing_a_hand_added_art_takes_it_out_of_the_futuro(self):
+        window = self.window
+        window.settings.folder_selected.emit(self.art_folder)
+        self._clean_roll()
+        arts, panel = window.art_controller, window.artwork_panel
+        panel.add_configured_artwork(self.b, 5, 5, 2, manual=True)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertEqual(row_of(arts.service, "b.png").future, 2)
+        panel._remove_card(panel._artwork_cards[0])
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertEqual(row_of(arts.service, "b.png").future, 0)
+        self._clean_roll()
+
+    def test_roll_cards_built_from_orders_are_not_counted_twice(self):
+        window = self.window
+        window.settings.folder_selected.emit(self.art_folder)
+        self._clean_roll()
+        window.artwork_panel.add_configured_artwork(self.a, 5, 5, 3)            # from the order flow
+        self.app.processEvents()
+        self.assertEqual(window.artwork_panel.manual_copies(), {})
+        self.assertEqual(row_of(window.art_controller.service, "a.png").future, 0)
+        self._clean_roll()
+
+    def test_double_click_on_a_card_selects_it_on_the_roll_and_roll_selection_highlights_the_card(self):
+        window = self.window
+        self._clean_roll()
+        panel, roll = window.artwork_panel, window.roll_view
+        panel.add_configured_artwork(self.a, 5, 5, 2, manual=True)
+        panel.add_configured_artwork(self.b, 5, 5, 1, manual=True)
+        self.app.processEvents()
+        card_a, card_b = panel._artwork_cards
+        key_a, key_b = str(card_a.property("rollKey")), str(card_b.property("rollKey"))
+        card_b.locate_requested.emit(card_b)                                      # what a double click emits
+        self.assertEqual(set(roll.scene().selectedItems()), set(roll._artwork_items[key_b]))
+        self.assertTrue(card_b.property("selected"))
+        self.assertFalse(card_a.property("selected"))
+        roll.scene().clearSelection()                                             # click on the roll: art A
+        roll._artwork_items[key_a][0].setSelected(True)
+        self.assertTrue(card_a.property("selected"))
+        self.assertFalse(card_b.property("selected"))
+        roll.scene().clearSelection()
+        self.assertFalse(card_a.property("selected"))
+        self._clean_roll()
+
+    def test_the_roll_fills_the_height_down_to_the_footer(self):
+        window = self.window
+        self._clean_roll()
+        window.pages.setCurrentWidget(window.editor_page)
+        window.main_tabs.setCurrentIndex(0)
+        window.resize(1600, 900)
+        window.artwork_panel.add_configured_artwork(self.a, 5, 5, 1, manual=True)
+        self.app.processEvents()
+        self.assertFalse(window.roll_spacer.isVisibleTo(window))
+        self.assertGreater(window.roll_canvas.height(), 500)
+        self._clean_roll()
+        self.assertTrue(window.roll_spacer.isVisibleTo(window))
+
 
 if __name__ == "__main__":
     unittest.main()

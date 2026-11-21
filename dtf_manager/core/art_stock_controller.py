@@ -8,7 +8,7 @@ from PySide6.QtGui import QGuiApplication
 
 from dtf_manager.services.art_directory_scanner import ArtDirectoryError
 from dtf_manager.services.art_folder_listing import list_art_files
-from dtf_manager.services.print_plan_service import count_art_copies
+from dtf_manager.services.print_plan_service import ArtCopyCount, CountedArt, count_art_copies
 from dtf_manager.services.stock_service import StockError
 
 DUPLICATE_SCAN_DELAY_MS = 1500          # after the list is on screen: never delays opening the tab
@@ -16,6 +16,7 @@ DUPLICATE_SCAN_DELAY_MS = 1500          # after the list is on screen: never del
 
 class ArtStockController(QObject):
     changed = Signal()                  # the art stock or its futuro changed
+    manual_consumed = Signal()          # finalize/cancel settled the hand-added copies
 
     def __init__(self, service, prompts, tab=None, orders_provider=None, folder_provider=None,
                  scanner=None, thumbs=None, listing=list_art_files, parent=None):
@@ -30,6 +31,8 @@ class ArtStockController(QObject):
         self._listing = listing
         self._folder: Path | None = None
         self._recalc_scheduled = False
+        self._manual: dict[str, int] = {}     # arts added by hand on the roll: path -> copies
+        self._had_manual = False
         self.identical_groups: list[list[str]] = []
         if scanner is not None:
             scanner.found.connect(self._identical_found)
@@ -94,15 +97,47 @@ class ArtStockController(QObject):
         """Replaces the arts futuro with the copies of the linked items of the counted orders.
         Skipped while no order is loaded (cancel/finalize clear the futuro on their own)."""
         loaded = list(self._orders())
-        if not loaded:
-            return False
         counted = json.loads(self.service.stock_repository.get_state("counted_orders", "[]") or "[]")
-        if counted and not ({o.platform_order_number for o in loaded} & set(counted)):
+        if not loaded:
+            if counted:
+                return False    # an operation is still pending: its futuro is not ours to rewrite
+            if not self._manual and not self._had_manual:
+                return False
+        elif counted and not ({o.platform_order_number for o in loaded} & set(counted)):
             return False        # the loaded orders are not the ones the stock import counted
-        count = count_art_copies(self.counted_orders())
+        count = self._with_manual(count_art_copies(self.counted_orders()))
+        self._had_manual = bool(self._manual)
         self.service.replace_future(count, reset_marks=reset_marks)
         self.refresh()
         return True
+
+    def _with_manual(self, count: ArtCopyCount) -> ArtCopyCount:
+        """Adds the copies of the arts the user put on the roll by hand."""
+        if not self._manual:
+            return count
+        arts = dict(count.arts)
+        for path, copies in self._manual.items():
+            key = str(Path(path).resolve()).casefold()
+            current = arts.get(key)
+            arts[key] = CountedArt(
+                current.file_name if current else Path(path).name,
+                current.file_reference if current else path,
+                (current.copies if current else 0) + copies)
+        return ArtCopyCount(arts, count.unlinked_items, count.item_count)
+
+    def set_manual_copies(self, copies) -> None:
+        """Arts added by hand on the roll also leave the stock: they join the futuro."""
+        copies = {path: int(amount) for path, amount in dict(copies).items() if int(amount) > 0}
+        if copies == self._manual:
+            return
+        self._manual = copies
+        self.schedule_recalc()
+
+    def clear_manual(self) -> None:
+        """Finalize/cancel already settled the futuro, hand-added copies included."""
+        self._manual = {}
+        self._had_manual = False
+        self.manual_consumed.emit()
 
     def schedule_recalc(self) -> None:
         """Called on every change of the orders/links: coalesces bursts into one recalculation."""

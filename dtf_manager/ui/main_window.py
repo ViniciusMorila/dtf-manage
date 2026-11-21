@@ -294,6 +294,12 @@ class MainWindow(QMainWindow):
         artwork.artwork_selection_requested.connect(
             lambda file_path: self.roll_view.select_artwork(str(file_path))
         )
+        artwork.artwork_locate_requested.connect(
+            lambda file_path: self.roll_view.select_artwork(str(file_path), center=True)
+        )
+        self.roll_view.artwork_selected.connect(artwork.highlight_roll_key)
+        artwork.manual_copies_changed.connect(self.art_controller.set_manual_copies)
+        self.art_controller.manual_consumed.connect(artwork.clear_manual_flags)
         self.roll_view.used_length_changed.connect(artwork.set_used_meters)
         self.roll_view.used_length_changed.connect(self._update_used_length)
         self.roll_view.selected_copy_removed.connect(
@@ -622,7 +628,7 @@ class MainWindow(QMainWindow):
                 for path, width, height, quantity in previous_entries:
                     self.artwork_panel.add_configured_artwork(path, width, height, quantity)
                 raise
-            self.roll_canvas.show()
+            self._set_roll_canvas_visible(True)
             self.pages.setCurrentWidget(self.editor_page)
             try:
                 batch_number = self.production_history_repository.next_batch_number()
@@ -677,6 +683,7 @@ class MainWindow(QMainWindow):
     def _clear_roll_project(self) -> None:
         self.artwork_panel.clear_artworks()
         self.roll_view.clear_artworks()
+        self._set_roll_canvas_visible(False)
 
     def _automatic_link_orders(self) -> None:
         if self._is_auto_linking or not self.order_import_state.all_items:
@@ -757,13 +764,13 @@ class MainWindow(QMainWindow):
         artwork.set_roll_settings(width_mm, cost)
 
     def _add_to_roll(self, file_path: str, width_mm: float, height_mm: float, quantity: int) -> None:
-        self.roll_canvas.show()
+        self._set_roll_canvas_visible(True)
         self.roll_view.add_artwork(file_path, width_mm, height_mm, quantity)
 
     def _remove_from_roll(self, file_path: Path) -> None:
         self.roll_view.remove_artwork(str(file_path))
         if not self.roll_view._artwork_items:
-            self.roll_canvas.hide()
+            self._set_roll_canvas_visible(False)
 
     def _set_artwork_folder(self, artwork: ArtworkPanel, folder: Path) -> None:
         artwork.artwork_folder = folder
@@ -783,7 +790,7 @@ class MainWindow(QMainWindow):
             if dialog.exec() == dialog.DialogCode.Accepted:
                 configured_width, configured_height, quantity = dialog.dimensions
                 artwork.add_configured_artwork(
-                    selected_path, configured_width, configured_height, quantity
+                    selected_path, configured_width, configured_height, quantity, manual=True
                 )
 
     def _import_orders(self) -> None:
@@ -908,7 +915,10 @@ class MainWindow(QMainWindow):
         canvas_layout.addWidget(self.roll_view, 1)
         layout.addWidget(canvas, 1)
         canvas.hide()
-        layout.addStretch(1)   # keeps the footer at the very bottom while the canvas is hidden
+        # Fills the space (keeping the footer at the bottom) only while the canvas is hidden;
+        # with the canvas visible the roll takes all the height down to the footer.
+        self.roll_spacer = QWidget()
+        layout.addWidget(self.roll_spacer, 1)
         footer = QHBoxLayout()
         self.used_length_label = QLabel("Comprimento utilizado: 0,00 m")
         footer.addWidget(self.used_length_label)
@@ -919,6 +929,10 @@ class MainWindow(QMainWindow):
         zoom_in.clicked.connect(self._zoom_in)
         fit.clicked.connect(self._fit_roll)
         return area
+
+    def _set_roll_canvas_visible(self, visible: bool) -> None:
+        self.roll_canvas.setVisible(visible)
+        self.roll_spacer.setVisible(not visible)
 
     def _update_used_length(self, used_meters: float) -> None:
         formatted = f"{used_meters:.2f}".replace(".", ",")

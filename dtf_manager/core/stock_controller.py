@@ -193,6 +193,8 @@ class StockController(QObject):
     def cancel_import(self) -> bool:
         """The operation was cancelled: forget its futuro and its import record."""
         done = self.service.cancel_current_import(self.art_service)
+        if self.arts is not None:
+            self.arts.clear_manual()
         self.refresh()
         return done
 
@@ -215,6 +217,8 @@ class StockController(QObject):
             if not self.prompts.confirm_finalize(summary):
                 return False
             done = self.service.finalize(self.art_service) is not None
+            if done and self.arts is not None:
+                self.arts.clear_manual()
             return done
         finally:
             self._busy = False

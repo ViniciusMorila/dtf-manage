@@ -260,3 +260,15 @@ quando só as estampas têm futuro.
 | `dtf_manager/core/art_stock_controller.py` | decide; a UI não chama serviços |
 | `dtf_manager/ui/pages/art_stock_tab.py` | a aba |
 | `tests/test_art_stock.py`, `tests/test_art_stock_ui.py` | testes |
+
+## Artes adicionadas à mão no rolo
+
+Uma arte adicionada manualmente no rolo ("Adicionar arte") também entra no **futuro** do estoque de estampas, com a
+quantidade do cartão (somada às cópias vindas dos pedidos, se for o mesmo arquivo). Alterar a quantidade ou excluir o
+cartão atualiza o futuro. Cartões montados a partir dos pedidos **não** são contados duas vezes. Ao finalizar ou cancelar,
+essas cópias são baixadas/zeradas junto e os cartões deixam de contar como "manuais".
+
+## Rolo e lista de artes
+
+Duplo clique num cartão da lista de artes seleciona e centraliza no rolo as cópias daquela arte; clicar numa arte no
+rolo destaca o cartão dela na lista. O rolo ocupa toda a altura disponível, até o rodapé.
