@@ -12,12 +12,12 @@ Não mexe em licenças nem na API. Tudo é local.
 | **Estoque** | Quantidade de cada cor × tamanho. Começa em 0. Dois cliques na célula para editar (inteiro ≥ 0). |
 | **Futuro** | O que os pedidos importados vão consumir (calculado a partir da planilha). |
 | **Saldo total** | Estoque − Futuro. Negativo fica em vermelho. |
-| **Separação** (à direita) | Cada cor/tamanho do pedido: precisa, em estoque, faltam (`max(0, futuro − estoque)`) e a marca "separado". O botão **Copiar lista do que falta comprar** copia um texto simples. |
+| **Separação** (à direita) | Cada cor/tamanho do pedido: precisa, estoque (✓ quando cobre, ✗ vermelho quando falta; o mouse sobre o ✗ mostra "Faltam N") e a marca "separado". |
 | **Pendentes** | Itens que ficaram fora da conta (veja "Janela de validação"). Aparecem destacados com um aviso. |
 
 Botões: **Nova cor**, **Novo tamanho** (nome obrigatório; duplicado é recusado ignorando maiúsculas, acentos e
 espaços extras), **Adicionar estoque em massa** (quantidade, cor "todas" ou uma, tamanhos "todos" ou
-selecionados, com confirmação mostrando o que muda), **Equivalências** e **Histórico**.
+selecionados, com confirmação mostrando o que muda), **Excluir cor**, **Contagem rápida** e **Histórico**.
 
 Cores iniciais: Preta, Marrom, Bege, Branca. Tamanhos: P, M, G, GG. Equivalências iniciais: "preto" = Preta e
 "branco" = Branca.
@@ -49,8 +49,8 @@ Formatos reconhecidos (maiúsculas, acentos e espaços duplos não importam):
   os já montados no rolo.
 - Linhas idênticas repetidas no mesmo pedido são somadas (como a planilha faz) e o app avisa quantas foram.
 
-Os nomes são comparados normalizados (minúsculas, sem acento, sem espaços extras). A tabela **Equivalências**
-(editável) ensina novos nomes, por exemplo "black" = Preta.
+Os nomes são comparados normalizados (minúsculas, sem acento, sem espaços extras). As equivalências ficam salvas
+no banco (por exemplo "preto" = Preta) e são aprendidas na janela de validação; não há tela para editá-las.
 
 ## Janela de validação (itens sem cor ou tamanho)
 

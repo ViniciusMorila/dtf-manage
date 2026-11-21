@@ -491,79 +491,6 @@ class StockHistoryDialog(QDialog):
                 table.setItem(row, column, _item(value))
 
 
-class AliasesDialog(QDialog):
-    """Editable equivalence table: text found in the spreadsheet -> color/size."""
-
-    def __init__(self, colors, sizes, aliases, parent=None):
-        super().__init__(parent)
-        self.setObjectName("aliasesDialog")
-        self.setWindowTitle("Equivalências de nomes")
-        self.resize(560, 460)
-        self._colors, self._sizes = list(colors), list(sizes)
-        layout = QVBoxLayout(self)
-        note = QLabel("Nomes escritos de outra forma na planilha (ex.: \"preto\" = Preta). "
-                      "Maiúsculas, acentos e espaços extras são ignorados.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        self.table = QTableWidget(0, 3)
-        self.table.setObjectName("aliasesTable")
-        self.table.setHorizontalHeaderLabels(("TIPO", "TEXTO NA PLANILHA", "EQUIVALE A"))
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table.verticalHeader().hide()
-        layout.addWidget(self.table, 1)
-        for kind, text, target in aliases:
-            self.add_row(kind, text, target)
-        row = QHBoxLayout()
-        add = QPushButton("Adicionar")
-        add.clicked.connect(lambda: self.add_row("color", "", None))
-        remove = QPushButton("Remover selecionada")
-        remove.clicked.connect(self._remove)
-        row.addWidget(add)
-        row.addWidget(remove)
-        row.addStretch()
-        layout.addLayout(row)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
-                                   | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def add_row(self, kind: str, text: str, target) -> None:
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        kind_box = QComboBox()
-        kind_box.addItem("Cor", "color")
-        kind_box.addItem("Tamanho", "size")
-        kind_box.setCurrentIndex(0 if kind == "color" else 1)
-        self.table.setCellWidget(row, 0, kind_box)
-        self.table.setItem(row, 1, _item(text))
-        target_box = QComboBox()
-        self.table.setCellWidget(row, 2, target_box)
-        kind_box.currentIndexChanged.connect(lambda _i, b=kind_box, t=target_box: self._targets(b, t))
-        self._targets(kind_box, target_box, target)
-
-    def _targets(self, kind_box, target_box, selected=None) -> None:
-        target_box.clear()
-        options = self._colors if kind_box.currentData() == "color" else self._sizes
-        for option in options:
-            target_box.addItem(option.name, option.id)
-        if selected is not None:
-            target_box.setCurrentIndex(max(0, target_box.findData(selected)))
-
-    def _remove(self) -> None:
-        row = self.table.currentRow()
-        if row >= 0:
-            self.table.removeRow(row)
-
-    def rows(self):
-        result = []
-        for row in range(self.table.rowCount()):
-            text = self.table.item(row, 1).text() if self.table.item(row, 1) else ""
-            result.append((self.table.cellWidget(row, 0).currentData(), text,
-                           self.table.cellWidget(row, 2).currentData()))
-        return result
-
-
 class StockPrompts:
     """Everything the controller asks the user. One method per question."""
 
@@ -619,9 +546,3 @@ class StockPrompts:
 
     def show_history(self, movements, imports) -> None:
         StockHistoryDialog(movements, imports, self.parent).exec()
-
-    def edit_aliases(self, colors, sizes, aliases):
-        dialog = AliasesDialog(colors, sizes, aliases, self.parent)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return None
-        return dialog.rows()

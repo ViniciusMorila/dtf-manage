@@ -183,9 +183,7 @@ class StockTab(QWidget):
     new_size_requested = Signal()
     delete_color_requested = Signal(int)             # color id, or -1 = ask which one
     bulk_requested = Signal()
-    aliases_requested = Signal()
     history_requested = Signal()
-    copy_missing_requested = Signal()
     stock_edit_requested = Signal(int, int, str)     # color id, size id, typed text
     separated_changed = Signal(int, int, bool)
 
@@ -245,7 +243,6 @@ class StockTab(QWidget):
             ("new_size_button", "Novo tamanho", self.new_size_requested),
             ("delete_color_button", "Excluir cor", None),
             ("bulk_button", "Adicionar estoque em massa", self.bulk_requested),
-            ("aliases_button", "Equivalências", self.aliases_requested),
             ("history_button", "Histórico", self.history_requested),
         ):
             button = QPushButton(text)
@@ -319,9 +316,6 @@ class StockTab(QWidget):
         self.separation_stack.addWidget(self.empty_label)
         self.separation_stack.addWidget(self.separation_table)
         right.addWidget(self.separation_stack, 1)
-        self.copy_button = QPushButton("Copiar lista do que falta comprar")
-        self.copy_button.clicked.connect(self.copy_missing_requested)
-        right.addWidget(self.copy_button)
         self.pending_label = QLabel()
         self.pending_label.setObjectName("pendingWarning")
         self.pending_label.setWordWrap(True)
@@ -523,7 +517,6 @@ class StockTab(QWidget):
         del blocker
         self.separation_stack.setCurrentWidget(
             self.separation_table if snapshot.separation else self.empty_label)
-        self.copy_button.setEnabled(any(e.missing > 0 for e in snapshot.separation))
 
     def _fill_pending(self, snapshot) -> None:
         table = self.pending_table

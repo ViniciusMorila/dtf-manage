@@ -4,7 +4,6 @@ import hashlib
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtGui import QGuiApplication
 
 from dtf_manager.models.stock import ImportDecision, ImportNotice, NoticeChoice
 from dtf_manager.services.stock_service import StockError, StockService
@@ -35,9 +34,7 @@ class StockController(QObject):
             tab.new_size_requested.connect(self.new_size)
             tab.delete_color_requested.connect(self.delete_color)
             tab.bulk_requested.connect(self.bulk_add)
-            tab.aliases_requested.connect(self.edit_aliases)
             tab.history_requested.connect(self.show_history)
-            tab.copy_missing_requested.connect(self.copy_missing)
             tab.stock_edit_requested.connect(self.edit_stock)
             tab.separated_changed.connect(self.service.set_separated)
         self.refresh()
@@ -97,15 +94,6 @@ class StockController(QObject):
         self.refresh()
         return ok
 
-    def edit_aliases(self) -> None:
-        snapshot = self.service.snapshot()
-        rows = self.prompts.edit_aliases(snapshot.colors, snapshot.sizes,
-                                         self.service.repository.aliases())
-        if rows is None:
-            return
-        self.service.replace_aliases(rows)
-        self.refresh()
-
     # ---- stock ------------------------------------------------------------------------
     def edit_stock(self, color_id: int, size_id: int, text: str) -> None:
         _, ok = self._try(self.service.set_stock, color_id, size_id, text)
@@ -122,22 +110,6 @@ class StockController(QObject):
         if ok:
             self.refresh()
             self.prompts.info("Estoque em massa", f"Estoque atualizado em {count} combinação(ões).")
-
-    def copy_missing(self) -> None:
-        text = self.missing_text()
-        if not text:
-            self.prompts.info("Lista de compra", "Não falta nenhuma camiseta.")
-            return
-        QGuiApplication.clipboard().setText(text)
-        self.prompts.info("Lista de compra", "Lista copiada. É só colar onde precisar.")
-
-    def missing_text(self) -> str:
-        rows = [r for r in self.service.snapshot().separation if r.missing > 0]
-        if not rows:
-            return ""
-        lines = ["Faltam comprar:"] + [f"{r.color} {r.size}: {r.missing}" for r in rows]
-        lines.append(f"Total: {sum(r.missing for r in rows)}")
-        return "\n".join(lines)
 
     def show_history(self) -> None:
         self.prompts.show_history(self.service.movements(), self.service.imports())

@@ -19,7 +19,7 @@ from dtf_manager.ui.main_window import MainWindow
 from dtf_manager.ui.pages.stock_tab import NEGATIVE, StockTab
 from dtf_manager.ui.styles import APP_STYLE
 from dtf_manager.ui.widgets.stock_dialogs import (
-    AliasesDialog, BulkAddDialog, FinalizeDialog, ImportNoticeDialog, StockHistoryDialog,
+    BulkAddDialog, FinalizeDialog, ImportNoticeDialog, StockHistoryDialog,
     ValidationDialog,
 )
 from tests.stock_fakes import (
@@ -46,7 +46,6 @@ class FakePrompts:
         self.finalize_summaries, self.finalize_answer = [], True
         self.on_finalize = None
         self.bulk_answer = None
-        self.aliases_answer = None
         self.history_calls = []
         self.delete_choice, self.delete_confirm, self.delete_confirms = None, True, []
 
@@ -86,9 +85,6 @@ class FakePrompts:
 
     def show_history(self, movements, imports):
         self.history_calls.append((movements, imports))
-
-    def edit_aliases(self, colors, sizes, aliases):
-        return self.aliases_answer
 
 
 class ControllerBase(unittest.TestCase):
@@ -242,7 +238,7 @@ class TabTests(ControllerBase):
         self.controller.bulk_add()
         self.assertEqual(stock_of(self.service, "Bege", "GG"), 3)
 
-    def test_separation_list_checkbox_and_missing_text(self):
+    def test_separation_list_and_checkbox(self):
         self.service.set_stock(self.colors["Preta"], self.sizes["G"], "2")
         self.run_import(self.orders(n=5, variation="Preta,G") + [make_order("X", ("Bege,M", 1))])
         self.service.set_stock(self.colors["Bege"], self.sizes["M"], "4")
@@ -261,23 +257,17 @@ class TabTests(ControllerBase):
         table.item(preta, 4).setCheckState(Qt.CheckState.Checked)
         table.item(bege, 4).setCheckState(Qt.CheckState.Checked)       # checkable on every row
         self.assertEqual(sum(r.separated for r in self.service.snapshot().separation), 2)
-        text = self.controller.missing_text()
-        self.assertIn("Preta G: 3", text)
-        self.assertNotIn("Bege", text)
-        self.assertIn("Total: 3", text)
 
-    def test_separation_empty_state_is_centered_and_copy_is_disabled_when_nothing_is_missing(self):
+    def test_separation_empty_state_is_centered(self):
         self.assertIs(self.tab.separation_stack.currentWidget(), self.tab.empty_label)
         self.assertTrue(self.tab.empty_label.alignment() & Qt.AlignmentFlag.AlignCenter)
-        self.assertFalse(self.tab.copy_button.isEnabled())
         self.service.bulk_add(10)
         self.run_import(self.orders(n=2))                                # stock covers it
         self.assertIs(self.tab.separation_stack.currentWidget(), self.tab.separation_table)
-        self.assertFalse(self.tab.copy_button.isEnabled())
         self.assertEqual(self.tab.separation_table.item(0, 3).text(), "✓")
         self.service.set_stock(self.colors["Preta"], self.sizes["G"], "1")
         self.controller.refresh()
-        self.assertTrue(self.tab.copy_button.isEnabled())
+        self.assertEqual(self.tab.separation_table.item(0, 3).text(), "✗")
 
     def test_summary_cards(self):
         self.assertEqual(self.tab.stock_card.value_label.text(), "0")
@@ -431,12 +421,18 @@ class TabTests(ControllerBase):
         self.assertIn("Enter", self.tab.hint_label.text())
         self.assertIn("Esc", self.tab.hint_label.text())
 
-    def test_aliases_are_editable_and_change_how_names_are_read(self):
-        self.prompts.aliases_answer = [("color", "Black", self.colors["Preta"])]
-        self.controller.edit_aliases()
+    def test_saved_equivalences_still_change_how_names_are_read(self):
+        self.service.replace_aliases([("color", "Black", self.colors["Preta"])])
         self.run_import([make_order("A", ("black,G", 2))])
         self.assertEqual(future_of(self.service, "Preta", "G"), 2)
         self.assertEqual(self.prompts.validations, [])
+
+    def test_there_is_no_copy_list_or_equivalences_button(self):
+        self.assertFalse(hasattr(self.tab, "copy_button"))
+        self.assertFalse(hasattr(self.tab, "aliases_button"))
+        texts = [b.text() for b in self.tab.findChildren(type(self.tab.new_color_button))]
+        self.assertNotIn("Equivalências", texts)
+        self.assertFalse(any("Copiar" in text for text in texts))
 
     def test_history_screen_receives_movements_and_imports(self):
         self.run_import(self.orders())
@@ -778,7 +774,7 @@ class DialogTests(ControllerBase):
         self.assertEqual(dialog.imports_table.rowCount(), 1)
         self.assertTrue(dialog.imports_table.item(0, 3).text().startswith("Sim"))
 
-    def test_bulk_dialog_summary_and_aliases_dialog(self):
+    def test_bulk_dialog_summary(self):
         snap = self.service.snapshot()
         bulk = BulkAddDialog(snap.colors, snap.sizes, self.service.preview_bulk)
         bulk.quantity.setValue(4)
@@ -788,10 +784,6 @@ class DialogTests(ControllerBase):
         quantity, color_id, sizes = bulk.request()
         self.assertEqual((quantity, color_id, len(sizes)), (4, self.colors["Preta"], 2))
         self.assertIn("2 combinação", bulk.summary())
-        dialog = AliasesDialog(snap.colors, snap.sizes, self.service.repository.aliases())
-        self.assertEqual(dialog.table.rowCount(), 2)
-        dialog.add_row("size", "extra grande", self.sizes["GG"])
-        self.assertIn(("size", "extra grande", self.sizes["GG"]), dialog.rows())
 
 
 class MainWindowStockTests(unittest.TestCase):
