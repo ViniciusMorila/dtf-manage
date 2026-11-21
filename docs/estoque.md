@@ -133,3 +133,16 @@ Tabelas: `stock_colors`, `stock_sizes`, `stock_levels`, `stock_future`, `stock_a
 | `dtf_manager/ui/widgets/stock_dialogs.py` | diálogos e `StockPrompts` |
 
 Testes: `tests/test_stock_service.py` (regras, sem Qt) e `tests/test_stock_ui.py` (controller, diálogos, janela).
+
+## Layout da aba e exclusão de cor
+
+- Cada cor é uma **caixinha de bordas arredondadas**, com um pequeno espaço entre uma e outra. Dentro dela ficam os
+  tamanhos um abaixo do outro (P, M, G, GG), cada um com Estoque, Futuro e Saldo. No fim há uma única caixa
+  "TOTAL GERAL".
+- **Excluir cor** (botão ao lado de "Nova cor"): pergunta qual cor e pede confirmação, dizendo quanto estoque e
+  futuro serão descartados. Remove a cor, o estoque e o futuro dela, os mapeamentos SKU → cor e as equivalências que
+  apontavam para ela. O que ela tinha vira "Ajuste manual" para 0 no histórico (nota "Cor excluída"), e os
+  movimentos antigos continuam lá. Dá para cadastrar a cor de novo depois.
+- **Janela de validação:** mostra a imagem do produto (o link `Link da Imagem` da planilha, baixado em segundo plano;
+  sem imagem aparece "sem imagem") e pergunta só a **cor**. Os seletores de tamanho só aparecem quando alguma linha
+  não tem tamanho legível.

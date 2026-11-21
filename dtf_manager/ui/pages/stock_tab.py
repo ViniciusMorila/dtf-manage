@@ -2,8 +2,8 @@
 "Separação" on the right.
 
 Only shows data and emits signals; the StockController decides everything."""
-from PySide6.QtCore import QSignalBlocker, Qt, Signal
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtCore import QRectF, QSignalBlocker, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QAbstractItemDelegate, QAbstractItemView, QFrame, QHBoxLayout, QHeaderView, QLabel,
     QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -19,7 +19,11 @@ NORMAL = QColor("#f2e9eb")
 NEGATIVE_BG = QColor("#3a0d17")
 HOVER_BG = QColor("#3b1824")
 TOTAL_BG = QColor("#1a0e13")
-HEADER_ROWS = 1                 # one header row: COR | TAM. | ESTOQUE | FUTURO | SALDO
+HEADER_ROWS = 2                 # row 0: COR | TAM. | ESTOQUE | FUTURO | SALDO, row 1: gap
+GAP_HEIGHT = 10                 # blank row between two color boxes
+CARD_RADIUS = 10
+CARD_BORDER = QColor("#4a1620")
+PAGE_BG = QColor("#030304")
 COLUMNS = ("COR", "TAM.", "ESTOQUE", "FUTURO", "SALDO")
 STOCK_COLUMN = 2
 ROW_DARK = QColor("#0a090b")
@@ -72,6 +76,8 @@ class StockMatrix(QTableWidget):
         self.quick_mode = False
         self._stock_rows: list[int] = []
         self._hover: tuple[int, int] | None = None
+        self._blocks: list[tuple[int, int]] = []
+        self.setShowGrid(False)
 
     # ---- editable cells ------------------------------------------------------------
     def set_stock_rows(self, rows) -> None:
@@ -130,6 +136,32 @@ class StockMatrix(QTableWidget):
         self._paint(self._hover, False)
         self._hover = position
         self._paint(position, True)
+
+    def set_blocks(self, blocks) -> None:
+        """(first row, last row) of each rounded box: one per color and the Total geral."""
+        self._blocks = list(blocks)
+        self.viewport().update()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if not self._blocks or self.columnCount() == 0:
+            return
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        model, last_column = self.model(), self.columnCount() - 1
+        for first, last in self._blocks:
+            area = self.visualRect(model.index(first, 0)).united(
+                self.visualRect(model.index(last, last_column)))
+            rect = QRectF(area).adjusted(0.75, 0.75, -0.75, -0.75)
+            outside = QPainterPath()
+            outside.addRect(rect.adjusted(-3, -3, 3, 3))
+            inside = QPainterPath()
+            inside.addRoundedRect(rect, CARD_RADIUS, CARD_RADIUS)
+            painter.fillPath(outside.subtracted(inside), PAGE_BG)    # round the square corners
+            painter.setPen(QPen(CARD_BORDER, 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(rect, CARD_RADIUS, CARD_RADIUS)
+        painter.end()
 
     def reapply_hover(self) -> None:
         self._paint(self._hover, True)
@@ -374,19 +406,24 @@ class StockTab(QWidget):
         table = self.matrix
         sizes, colors = snapshot.sizes, snapshot.colors
         structure = (tuple((c.id, c.name) for c in colors), tuple((s.id, s.name) for s in sizes))
-        total_row = HEADER_ROWS + len(colors) * len(sizes)
+        step = len(sizes) + 1                       # one box of sizes + one gap row
+        total_row = HEADER_ROWS + len(colors) * step
         editing = table.state() == QAbstractItemView.State.EditingState
         blocker = QSignalBlocker(table)
         if structure != self._structure:
             table.set_hover(None)
             table.clear()
             table.clearSpans()
+            table.verticalHeader().setMinimumSectionSize(4)    # lets the gap rows be thin
             table.setRowCount(total_row + 1)
+            blocks = []
             table.setColumnCount(len(COLUMNS))
             for column, text in enumerate(COLUMNS):
                 table.setItem(0, column, self._header_item(text))
             for block, color in enumerate(colors):
-                first = HEADER_ROWS + block * len(sizes)
+                first = HEADER_ROWS + block * step
+                blocks.append((first, first + len(sizes) - 1))
+                table.setRowHeight(first + len(sizes), GAP_HEIGHT)
                 background, text = shirt_colors(color.name)
                 label = self._header_item(color.name.upper())
                 label.setBackground(QBrush(background))
@@ -425,14 +462,18 @@ class StockTab(QWidget):
             table.setColumnWidth(1, 70)
             table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
             table.setRowHeight(0, 28)
+            table.setRowHeight(1, GAP_HEIGHT)
             table.setRowHeight(total_row, 32)
-            table.set_stock_rows(range(HEADER_ROWS, total_row))
+            blocks.append((total_row, total_row))
+            table.set_blocks(blocks)
+            table.set_stock_rows(row for first, last in blocks[:-1]
+                                 for row in range(first, last + 1))
             self._structure, self._total_row = structure, total_row
         # values: updated in place, so an open editor survives the refresh
         totals = [0, 0, 0]
         for block, color in enumerate(colors):
             for offset, size in enumerate(sizes):
-                row = HEADER_ROWS + block * len(sizes) + offset
+                row = HEADER_ROWS + block * step + offset
                 key = (color.id, size.id)
                 stock, future = snapshot.stock.get(key, 0), snapshot.future.get(key, 0)
                 for kind, value in enumerate((stock, future, stock - future)):
@@ -530,7 +571,7 @@ class StockTab(QWidget):
         if (self._rendering or item.column() != STOCK_COLUMN
                 or item.row() not in self.matrix.stock_rows):
             return                          # only the Estoque cells are editable
-        color_index, size_index = divmod(item.row() - HEADER_ROWS, len(self._size_ids))
+        color_index, size_index = divmod(item.row() - HEADER_ROWS, len(self._size_ids) + 1)
         self.stock_edit_requested.emit(
             self._color_ids[color_index], self._size_ids[size_index], item.text())
 

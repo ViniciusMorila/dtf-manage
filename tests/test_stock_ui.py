@@ -120,7 +120,7 @@ class ControllerBase(unittest.TestCase):
     def cell(self, kind, color, size):
         """kind: "stock" | "future" | "balance" -> the item in the single matrix table."""
         snap = self.service.snapshot()
-        row = (1 + [c.name for c in snap.colors].index(color) * len(snap.sizes)
+        row = (2 + [c.name for c in snap.colors].index(color) * (len(snap.sizes) + 1)
                + [s.name for s in snap.sizes].index(size))
         return self.tab.matrix.item(row, 2 + ("stock", "future", "balance").index(kind))
 
@@ -128,13 +128,13 @@ class ControllerBase(unittest.TestCase):
 class TabTests(ControllerBase):
     def test_one_block_per_color_with_the_sizes_stacked(self):
         matrix = self.tab.matrix
-        self.assertEqual(matrix.rowCount(), 1 + 4 * 4 + 1)         # header + blocks + Total geral
+        self.assertEqual(matrix.rowCount(), 2 + 4 * 5 + 1)         # header+gap, 4 boxes+gaps, Total
         self.assertEqual(matrix.columnCount(), 5)
         self.assertEqual([matrix.item(0, c).text() for c in range(5)],
                          ["COR", "TAM.", "ESTOQUE", "FUTURO", "SALDO"])
-        self.assertEqual([matrix.item(r, 1).text() for r in range(1, 5)], ["P", "M", "G", "GG"])
-        self.assertEqual(matrix.rowSpan(1, 0), 4)                  # the color box covers its sizes
-        self.assertEqual([matrix.item(r, 1).text() for r in range(5, 9)], ["P", "M", "G", "GG"])
+        self.assertEqual([matrix.item(r, 1).text() for r in range(2, 6)], ["P", "M", "G", "GG"])
+        self.assertEqual(matrix.rowSpan(2, 0), 4)                  # the color box covers its sizes
+        self.assertEqual([matrix.item(r, 1).text() for r in range(7, 11)], ["P", "M", "G", "GG"])
         for kind in ("stock", "future", "balance"):
             self.assertEqual(self.cell(kind, "Preta", "G").text(), "0")
         self.service.bulk_add(2)
@@ -149,18 +149,33 @@ class TabTests(ControllerBase):
         self.assertFalse(bool(self.cell("balance", "Preta", "G").flags() & editable))
         self.assertTrue(bool(self.cell("stock", "Preta", "G").flags() & editable))
 
+    def test_each_color_is_its_own_rounded_box_with_a_gap_between_them(self):
+        from dtf_manager.ui.pages.stock_tab import GAP_HEIGHT
+        matrix = self.tab.matrix
+        self.assertEqual(matrix._blocks, [(2, 5), (7, 10), (12, 15), (17, 20), (22, 22)])
+        for gap in (1, 6, 11, 16, 21):                                # between boxes and before Total
+            self.assertIsNone(matrix.item(gap, 0))
+            self.assertEqual(matrix.rowHeight(gap), GAP_HEIGHT)
+            self.assertNotIn(gap, matrix.stock_rows)
+        self.assertFalse(matrix.showGrid())
+        matrix.resize(900, 700)
+        matrix.show()
+        self.app.processEvents()
+        image = matrix.viewport().grab().toImage()                    # the paint code runs
+        self.assertFalse(image.isNull())
+
     def test_size_rows_alternate_a_lighter_tone_for_contrast(self):
         from dtf_manager.ui.pages.stock_tab import ROW_DARK, ROW_LIGHT
         matrix = self.tab.matrix
         for column in (1, 2, 3):                 # TAM., ESTOQUE, FUTURO
-            tones = [matrix.item(row, column).background().color() for row in range(1, 5)]
+            tones = [matrix.item(row, column).background().color() for row in range(2, 6)]
             self.assertEqual(tones, [ROW_DARK, ROW_LIGHT, ROW_DARK, ROW_LIGHT])
-        self.assertEqual(matrix.item(5, 2).background().color(), ROW_DARK)   # next block restarts
+        self.assertEqual(matrix.item(7, 2).background().color(), ROW_DARK)   # next block restarts
 
     def test_color_column_is_painted_with_the_shirt_color(self):
         from dtf_manager.ui.pages.stock_tab import shirt_colors
         matrix = self.tab.matrix
-        starts = (1, 5, 9, 13)
+        starts = (2, 7, 12, 17)
         names = [matrix.item(r, 0).text() for r in starts]
         self.assertEqual(names, ["PRETA", "MARROM", "BEGE", "BRANCA"])
         for row, color in zip(starts, ("Preta", "Marrom", "Bege", "Branca")):
@@ -180,17 +195,17 @@ class TabTests(ControllerBase):
     def test_new_color_and_size_refuse_duplicates(self):
         self.prompts.names = ["Azul"]
         self.controller.new_color()
-        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 4 + 1)
+        self.assertEqual(self.tab.matrix.rowCount(), 2 + 5 * 5 + 1)
         self.prompts.names = ["PRETA"]
         self.controller.new_color()
-        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 4 + 1)
+        self.assertEqual(self.tab.matrix.rowCount(), 2 + 5 * 5 + 1)
         self.assertEqual(len(self.prompts.warnings), 1)
         self.prompts.names = ["xg"]
         self.controller.new_size()
-        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 5 + 1)
+        self.assertEqual(self.tab.matrix.rowCount(), 2 + 5 * 6 + 1)
         self.prompts.names = [None]
         self.controller.new_size()                                       # cancelled
-        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 5 + 1)
+        self.assertEqual(self.tab.matrix.rowCount(), 2 + 5 * 6 + 1)
 
     def test_delete_color_button_asks_which_color_and_confirms(self):
         self.prompts.names = ["Verde"]
@@ -338,6 +353,15 @@ class TabTests(ControllerBase):
         self.assertEqual(self.current(), (first + 1, 2))
         self.assertEqual(self.cell("stock", "Preta", "P").text(), "5")   # still shown
         self.assertEqual(self.tab.stock_card.value_label.text(), "11")
+
+    def test_enter_after_the_last_size_of_a_color_jumps_over_the_gap_to_the_next_color(self):
+        self.tab.show()
+        matrix = self.tab.matrix
+        matrix.edit_stock_row(5)                                       # Preta GG
+        self.editor().setText("2")
+        self.press(self.editor(), Qt.Key.Key_Return)
+        self.assertEqual(stock_of(self.service, "Preta", "GG"), 2)
+        self.assertEqual(self.current(), (7, 2))                       # Marrom P
 
     def test_the_total_row_is_never_entered_by_the_keyboard(self):
         self.tab.show()
