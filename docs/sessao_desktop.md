@@ -1,7 +1,14 @@
 # Sessão persistente do desktop — etapa 2
 
+> **Atualização (licenças):** a validação de licença, o ID da máquina, o timer
+> periódico e a carência offline estão em [licencas_desktop.md](licencas_desktop.md).
+> Este documento descreve apenas a sessão. As partes abaixo que citam
+> `/license/status`, `active`/`ACTIVE` ou a ausência de timer foram substituídas:
+> a licença vem de `GET /licencas/status` (`status == "ATIVA"`) e há validação a
+> cada 1 hora.
+
 Esta etapa usa os contratos fornecidos para a API. Não modifica o servidor,
-o SQLite operacional, a licença, importações, estoques ou exportações.
+o SQLite operacional, importações, estoques ou exportações.
 
 ## Armazenamento
 
@@ -10,8 +17,11 @@ A biblioteca está registrada explicitamente em `requirements.txt`, embora
 já fosse instalada neste ambiente pelo PyInstaller. Não usamos seleção automática
 de backends, `keyring`, arquivos de tokens ou fallback em texto puro.
 
-Existe uma única credencial genérica, com alvo `DTF Manager/session/` seguido
-da URL pública da API. O identificador da credencial é `desktop-refresh-token`.
+Existe uma única credencial genérica, com alvo `DTF Manager/session/production`
+(ou `DTF Manager/session/dev-<hash>` quando `DTF_API_URL` aponta para outra API;
+o alvo não depende mais da URL de produção). O identificador da credencial é
+`desktop-refresh-token`. A credencial antiga, que levava a URL no nome, não é
+migrada.
 `CredWrite` substitui o valor existente em uma chamada, sem arquivar A.
 `CRED_PERSIST_LOCAL_MACHINE` mantém a credencial entre sessões do mesmo usuário
 Windows, sem solicitar roaming. Senha e access token não são persistidos.
@@ -27,11 +37,11 @@ contém apenas os metadados de processo usados pelo Qt. Ao fechar, é liberada.
 ## Login, restauração e renovação
 
 - Sem refresh salvo, mostra o formulário de login.
-- Login: POST `/auth/login`; salva refresh protegido; publica access apenas
-  em memória; consulta `/license/status`; constrói MainWindow apenas com
-  `active == true` e `status == "ACTIVE"`.
+- Login: POST `/auth/login` com `email`, `senha` e `id_maquina`; salva refresh
+  protegido; publica access apenas em memória; consulta `GET /licencas/status`
+  (com `X-Id-Maquina`); constrói MainWindow apenas com `status == "ATIVA"`.
 - Com refresh salvo, chama POST `/auth/refresh` com
-  `{"refresh_token": "<token atual>"}`, sem Bearer nem cookies. A abertura
+  `{"refresh_token": "<token atual>", "id_maquina": "<id>"}`, sem Bearer nem cookies. A abertura
   automática válida não constrói LoginWindow. O formulário é criado somente
   quando necessário: ausência de sessão, falha, licença negada ou logout.
 - Valida access, refresh, tipo bearer e `expires_in`. No refresh exige um
@@ -41,9 +51,9 @@ contém apenas os metadados de processo usados pelo Qt. Ao fechar, é liberada.
 - `AuthService.refresh_session()` é o mecanismo central para futuros fluxos
   autenticados: consumidores aguardam `authenticated` ou `failed`. Solicitações
   concorrentes compartilham a mesma renovação; não disparam outro HTTP.
-- Não há timer periódico nem renovação automática por polling. A restauração
-  na abertura é automática; a renovação durante o uso pode ser solicitada pelo
-  mecanismo central quando houver novas chamadas autenticadas.
+- Há um `QTimer` de **1 hora** que valida a licença com a janela aberta. Quando o
+  access token expirou (401), o controller renova a sessão com o `id_maquina` e
+  repete a consulta uma única vez. A restauração na abertura continua automática.
 
 Fechar normalmente limpa memória e cancela replies, mas não apaga refresh
 protegido e não chama logout.
@@ -54,9 +64,14 @@ esse import permanece incluído na duração de construção da MainWindow.
 
 ## Erros e limite inevitável da rotação
 
-- Refresh 401/422: apaga a credencial e apresenta login.
-- 500/503, DNS, timeout ou conexão: preserva o token salvo e permite uma nova
-  tentativa manual ou voltar ao login. Entrar novamente cria outra sessão,
+- Refresh 401/422 (`INVALID_REFRESH_TOKEN`): apaga a credencial e o cache da
+  licença e apresenta login, explicando que a sessão pode ter sido encerrada por
+  um login em outro computador (sessão única), bloqueio ou reset.
+- Refresh 403/404/409 (`MAQUINA_DIFERENTE`, `LICENCA_EXPIRADA`, ...): não consome
+  nem apaga o token (contrato). Licença vencida abre a tela de chave.
+- 500/503, DNS, timeout ou conexão: preserva o token salvo. Com cache válido o
+  app entra na carência offline de 72 horas; sem ele permite uma nova tentativa
+  manual ou voltar ao login. Entrar novamente cria outra sessão,
   sem prometer revogar a anterior.
 - Resposta 200 inesperada: não sobrescreve armazenamento e bloqueia reutilização
   de A nesse processo, pois o servidor pode já ter rotacionado. Exige login.

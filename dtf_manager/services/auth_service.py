@@ -2,15 +2,9 @@
 from PySide6.QtCore import QObject, Signal
 from dtf_manager.core import auth_timing
 
+from dtf_manager.models.license import LicenseInfo
+from dtf_manager.services.api_failure import ApiFailure, failure_kind  # noqa: F401 (re-export)
 from dtf_manager.services.session_storage import SessionStorage, SessionStorageError
-
-
-def failure_kind(result):
-    if result.error in {"network", "timeout", "invalid_json"}:
-        return result.error
-    if result.status == 401:
-        return "unauthorized"
-    return "server"
 
 
 class AuthService(QObject):
@@ -19,15 +13,19 @@ class AuthService(QObject):
     failed = Signal(str)
     logged_out = Signal(bool)  # True only after confirmed remote logout.
     logout_failed = Signal(str)
+    registered = Signal(object)       # LicenseInfo | None
+    register_failed = Signal(str)
 
-    def __init__(self, client, parent=None, *, storage=None):
+    def __init__(self, client, parent=None, *, storage=None, machine_id=None):
         super().__init__(parent)
         self.client = client
         self.storage = storage if storage is not None else SessionStorage()
+        self._machine_id = machine_id
         self.access_token = None
         self.refresh_token = None
         self.expires_in = None
         self.last_operation = None
+        self.last_failure = ApiFailure("server")
         self.remote_logout_confirmed = False
         self._generation = 0
         self._operation = None
@@ -37,6 +35,16 @@ class AuthService(QObject):
     @property
     def refresh_in_progress(self):
         return self._operation == "refresh"
+
+    @property
+    def machine_id(self):
+        """Hardware id of this computer; raises MachineIdError when unavailable."""
+        if callable(self._machine_id):
+            return self._machine_id()
+        if self._machine_id is None:
+            from dtf_manager.services.machine_id import get_machine_id
+            return get_machine_id()
+        return self._machine_id
 
     def clear(self):
         """Cancel logical requests and clear memory, never persistent storage."""
@@ -69,15 +77,24 @@ class AuthService(QObject):
         except SessionStorageError:
             return False
 
-    def _authentication_failed(self, kind, *, forget=False):
+    def _authentication_failed(self, kind, *, forget=False, failure=None):
         waiting = self._logout_waiting
         if forget and not self._forget_saved():
-            kind = "storage"
+            kind, failure = "storage", None
+        self.last_failure = failure or ApiFailure(kind)
         self.clear()
         if waiting:
             self.logout()
         else:
             self.failed.emit(kind)
+
+    def _machine_id_or_fail(self):
+        try:
+            return self.machine_id
+        except Exception:
+            self._operation = None
+            self._authentication_failed("machine_id")
+            return None
 
     def login(self, email, password):
         if self._operation is not None:
@@ -85,8 +102,12 @@ class AuthService(QObject):
         self.clear()
         self._refresh_blocked = False
         self.last_operation = "login"
+        machine_id = self._machine_id_or_fail()
+        if machine_id is None:
+            return False
         self._operation = "login"
-        self._request_tokens("/auth/login", {"email": email, "password": password})
+        self._request_tokens("/auth/login", {"email": email, "senha": password,
+                                             "id_maquina": machine_id})
         return True
 
     def refresh_session(self):
@@ -95,6 +116,7 @@ class AuthService(QObject):
             return False
         self.last_operation = "refresh"
         if self._refresh_blocked:
+            self.last_failure = ApiFailure("invalid_json")
             self.failed.emit("invalid_json")
             return False
         try:
@@ -108,8 +130,46 @@ class AuthService(QObject):
         if not token:
             self._authentication_failed("no_session")
             return False
+        machine_id = self._machine_id_or_fail()
+        if machine_id is None:
+            return False
         self._operation = "refresh"
-        self._request_tokens("/auth/refresh", {"refresh_token": token})
+        self._request_tokens("/auth/refresh", {"refresh_token": token, "id_maquina": machine_id})
+        return True
+
+    def register(self, name, phone, email, password, key=None):
+        """Create the account with the trial license, or with the plan of ``key``.
+
+        The API returns no tokens. With a key it validates, creates the account and
+        consumes the key in one transaction: a refusal creates nothing."""
+        if self._operation is not None:
+            return False
+        self.last_operation = "register"
+        try:
+            machine_id = self.machine_id
+        except Exception:
+            self.last_failure = ApiFailure("machine_id")
+            self.register_failed.emit("machine_id")
+            return False
+        self._generation += 1
+        generation = self._generation
+        self._operation = "register"
+
+        def completed(result):
+            if generation != self._generation or self._operation != "register":
+                return
+            self._operation = None
+            if result.error or not 200 <= result.status < 300:
+                self.last_failure = ApiFailure.from_result(result)
+                self.register_failed.emit(self.last_failure.kind)
+                return
+            self.registered.emit(LicenseInfo.from_dict((result.data or {}).get("licenca")))
+
+        body = {"nome": name, "telefone": phone, "email": email, "senha": password,
+                "id_maquina": machine_id}
+        if key:
+            body["chave_ativacao"] = key
+        self.client.post_json("/auth/register", body, completed)
         return True
 
     def _request_tokens(self, path, body):
@@ -121,14 +181,18 @@ class AuthService(QObject):
             if generation != self._generation or self._operation != operation:
                 return
             if result.error or result.status != 200:
+                failure = ApiFailure.from_result(result)
                 if (operation == "refresh" and result.status in {401, 422}
                         and result.error not in {"network", "timeout"}):
-                    self._authentication_failed("unauthorized", forget=True)
+                    # INVALID_REFRESH_TOKEN: ended by another login, block or reset.
+                    self._authentication_failed("unauthorized", forget=True, failure=failure)
                 else:
+                    # License/machine refusals (403/404/409) neither consume nor
+                    # delete the refresh token (contract); neither do 429/5xx/network.
                     if operation == "refresh" and result.status == 200:
                         # A 200 may have rotated A even when B cannot be decoded.
                         self._refresh_blocked = True
-                    self._authentication_failed(failure_kind(result))
+                    self._authentication_failed(failure.kind, failure=failure)
                 return
             tokens = self._tokens(result.data)
             if not tokens:
@@ -174,6 +238,7 @@ class AuthService(QObject):
         try:
             token = self.refresh_token or self.storage.load_refresh_token()
         except SessionStorageError:
+            self.last_failure = ApiFailure("storage")
             self.logout_failed.emit("storage")
             return False
         if not token:
@@ -189,9 +254,11 @@ class AuthService(QObject):
                 return
             self._operation = None
             if result.error or result.status != 200:
-                self.logout_failed.emit(failure_kind(result))
+                self.last_failure = ApiFailure.from_result(result)
+                self.logout_failed.emit(self.last_failure.kind)
                 return
             if not result.data or result.data.get("status") != "ok":
+                self.last_failure = ApiFailure("invalid_json")
                 self.logout_failed.emit("invalid_json")
                 return
             self.remote_logout_confirmed = True
@@ -203,6 +270,7 @@ class AuthService(QObject):
     def _end_session(self, remote_confirmed):
         self.clear()
         if not self._forget_saved():
+            self.last_failure = ApiFailure("storage")
             self.logout_failed.emit("storage")
             return False
         self._refresh_blocked = False

@@ -9,7 +9,7 @@ if __package__ in (None, ""):
 
 from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QFont
-from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
 
 from dtf_manager.core.constants import APP_NAME
 from dtf_manager.ui.panels.artwork_panel import ArtworkPanel
@@ -46,10 +46,24 @@ from dtf_manager.services.active_operation_service import (
     build_import_operation_fingerprint, checkpoint_operation, create_active_operation,
 )
 from dtf_manager.ui.widgets.existing_operation_dialog import ExistingOperationDialog
+from dtf_manager.core.stock_controller import StockController
+from dtf_manager.services.stock_repository import StockRepository
+from dtf_manager.services.stock_service import StockService
+from dtf_manager.ui.pages.stock_tab import StockTab
+from dtf_manager.ui.widgets.stock_dialogs import StockPrompts
+
+
+def _days_text(days):
+    if days is None:
+        return "sem prazo"
+    return f"{days} dia" + ("" if days == 1 else "s")
 
 
 class MainWindow(QMainWindow):
     logout_requested = Signal()
+    renew_requested = Signal()
+    subscribe_requested = Signal()
+    plans_requested = Signal()   # optional site (DTF_PAYMENT_URL)
 
     def __init__(self):
         super().__init__()
@@ -72,12 +86,11 @@ class MainWindow(QMainWindow):
         self._is_auto_linking = False
         self._is_building_order = False
         self._return_to_production_review = False
+        self._pending_stock_import = None
         with auth_timing.span("main_build_ui"):
             self._build_ui()
         self._authentication_logout = False
-        self.logout_button = QPushButton("Sair da conta")
-        self.logout_button.clicked.connect(self.logout_requested)
-        self.statusBar().addPermanentWidget(self.logout_button)
+        self._build_license_status()
         self.order_import_state.changed.connect(self._checkpoint_current_operation)
         self._refresh_active_operation_card()
         if self.link_memory_repository.load_warning:
@@ -87,9 +100,132 @@ class MainWindow(QMainWindow):
         elif self.active_operation_repository.load_warning:
             self.statusBar().showMessage(self.active_operation_repository.load_warning, 15000)
 
+    def _build_license_status(self):
+        """Top right corner: plan and days left, greeting, account menu and sign out."""
+        self.license_label = QLabel()
+        self.license_label.setObjectName("licenseLabel")
+        self.license_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.license_label.hide()
+        self.greeting_label = QLabel()
+        self.greeting_label.setObjectName("greetingLabel")
+        self.greeting_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.greeting_label.hide()
+        self.account_button = QPushButton("Conta")
+        menu = QMenu(self.account_button)
+        self.subscribe_action = menu.addAction("Assinar...")
+        self.renew_action = menu.addAction("Renovar licença (inserir chave)...")
+        self.plans_action = menu.addAction("Ver planos no site...")
+        self.plans_action.setVisible(False)
+        self.subscribe_action.triggered.connect(self.subscribe_requested)
+        self.renew_action.triggered.connect(self.renew_requested)
+        self.plans_action.triggered.connect(self.plans_requested)
+        self.account_button.setMenu(menu)
+        self.logout_button = QPushButton("Sair da conta")
+        self.logout_button.clicked.connect(self.logout_requested)
+        corner = self._corner = QWidget(self.menuBar())
+        row = QHBoxLayout(corner)
+        row.setContentsMargins(8, 4, 12, 4)
+        row.setSpacing(10)
+        self._first_name = ""
+        self._license_info = None
+        self._offline_remaining = None
+        for widget in (self.greeting_label, self.license_label, self.account_button,
+                       self.logout_button):
+            row.addWidget(widget)
+        self.menuBar().setCornerWidget(corner, Qt.Corner.TopRightCorner)
+
+    def set_user_name(self, name):
+        """First name for the greeting; unknown means no greeting."""
+        first = (name or "").split(maxsplit=1)
+        self._first_name = first[0][:40] if first else ""
+        self._render_account_header()
+
+    def set_payment_site(self, available):
+        self.plans_action.setVisible(available)
+
+    def show_license_notice(self, text):
+        """Discreet, temporary notice in the status bar (never blocks the work)."""
+        self.statusBar().showMessage(text, 30000)
+
+    def set_license_state(self, info, offline_remaining=None):
+        """Show plan and days left. Called by the controller after each validation."""
+        self._license_info = info
+        self._offline_remaining = offline_remaining
+        self._render_account_header()
+
+    def _render_account_header(self):
+        """"Olá, Nome (Plano)" first, then the days left; the trial keeps its own message.
+
+        Without a known name the label keeps the full "Plano X: ..." text instead."""
+        info, offline_remaining, name = (self._license_info, self._offline_remaining,
+                                         self._first_name)
+        greeting = f"Olá, {name}" if name else ""
+        if info is not None and name and info.plano != "TESTE":
+            greeting += f" ({info.plan_name})"
+        self.greeting_label.setText(greeting)
+        self.greeting_label.setVisible(bool(greeting))
+        if info is None:
+            self.license_label.hide()
+            return
+        days = info.dias_restantes
+        tone = "normal"
+        short = bool(name) and info.plano != "TESTE"       # the plan is already in the greeting
+        if info.vitalicia:
+            text = "" if short else f"Plano {info.plan_name}"
+        elif info.plano == "TESTE":
+            text = f"Período de teste: faltam {_days_text(days)}"
+            tone = "trial"
+        else:
+            text = f"{_days_text(days)} restantes" if short else (
+                f"Plano {info.plan_name}: {_days_text(days)} restantes")
+            if days is not None and days <= 7:
+                text = (f"vence em {_days_text(days)}" if short
+                        else f"Plano {info.plan_name}: vence em {_days_text(days)}")
+                tone = "warning"
+        if offline_remaining is not None:
+            hours = max(int(offline_remaining.total_seconds() // 3600), 0)
+            text = (f"Modo offline: licença não validada. Carência restante: {hours // 24} dia(s) "
+                    f"e {hours % 24} h. Conecte-se à internet." + (f" | {text}" if text else ""))
+            tone = "offline"
+        self.license_label.setText(text)
+        self.license_label.setToolTip(
+            "Validade: " + (info.data_expiracao[:10] if info.data_expiracao else "sem expiração"))
+        self.license_label.setProperty("tone", tone)
+        self.license_label.style().unpolish(self.license_label)
+        self.license_label.style().polish(self.license_label)
+        self.license_label.setVisible(bool(text))
+
+    def save_for_license_lock(self):
+        """Persist the active operation before the license blocks the window."""
+        try:
+            self._checkpoint_current_operation()
+        except Exception:
+            self.statusBar().showMessage("Não foi possível salvar a operação automaticamente.", 15000)
+            return False
+        return True
+
+    def _build_main_tabs(self):
+        """DTF (the existing pages, unchanged) + the two stock tabs."""
+        self.main_tabs = QTabWidget()
+        self.main_tabs.setObjectName("mainTabs")
+        self.main_tabs.setDocumentMode(True)
+        self.main_tabs.addTab(self.pages, "DTF")
+        self.stock_tab = StockTab()
+        self.stock_controller = StockController(
+            StockService(StockRepository.default(self.database)), StockPrompts(self),
+            self.stock_tab, mounted_lookup=self.processed_order_repository.known_orders,
+            parent=self)
+        self.main_tabs.addTab(self.stock_tab, "Estoque de camisetas")
+        prints = QLabel("Em breve")
+        prints.setObjectName("emptyState")
+        prints.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.prints_tab = prints
+        self.main_tabs.addTab(prints, "Estoque de estampas")
+        self.setCentralWidget(self.main_tabs)
+
     def _build_ui(self):
         self.pages = QStackedWidget()
-        self.setCentralWidget(self.pages)
+        self._build_main_tabs()
         root = QWidget()
         root.setObjectName("appRoot")
         self.editor_page = root
@@ -110,6 +246,9 @@ class MainWindow(QMainWindow):
         settings.regroup_requested.connect(lambda: self.roll_view.regroup_artworks())
         settings.add_artwork_requested.connect(lambda: self._add_artwork(artwork, settings.folder_path))
         settings.import_orders_requested.connect(self._import_orders)
+        settings.finalize_requested.connect(self.stock_controller.finalize)
+        self.stock_controller.changed.connect(settings.set_finalize_enabled)
+        settings.set_finalize_enabled(self.stock_controller.has_future)
         settings.link_memory_requested.connect(self._open_link_memory)
         settings.continue_operation_requested.connect(self._continue_active_operation)
         main_layout.addWidget(settings)
@@ -241,11 +380,13 @@ class MainWindow(QMainWindow):
         if self.active_operation is None:
             return
         operation = self.active_operation
+        self._pending_stock_import = None
         self._restoring_operation = True
         try:
             self.order_import_state.replace_orders(list(operation.imported_orders))
         finally:
             self._restoring_operation = False
+        self.stock_controller.sync_loaded_orders(operation.imported_orders)
         if operation.workflow_stage == "manual_linking" and operation.manual_linking_state:
             self.pages.setCurrentWidget(self.manual_linking_page)
             if self.manual_linking_page.restore_session(operation.manual_linking_state):
@@ -268,6 +409,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Operação em andamento", str(error))
         self._refresh_active_operation_card()
         self.pages.setCurrentWidget(self.orders_dashboard)
+        decision, self._pending_stock_import = self._pending_stock_import, None
+        if decision is not None:
+            self.stock_controller.apply_import(decision)
 
     def _open_production_history(self) -> None:
         self.production_history_page.pages.setCurrentIndex(0)
@@ -617,6 +761,14 @@ class MainWindow(QMainWindow):
         finally:
             self._is_importing_orders = False
             self.settings.set_importing(False)
+        # Stock protection runs BEFORE processing: repeated spreadsheet, finalized orders.
+        self._pending_stock_import = None
+        decision = self.stock_controller.review_import(Path(file_path), orders)
+        if decision is None or not decision.orders:
+            self.statusBar().showMessage("Importação cancelada.", 6000)
+            return
+        orders = decision.orders
+        self._pending_stock_import = decision
         analysis = analyze_imported_orders_against_history(
             orders, self.production_history_repository.list_all()
         )
@@ -633,6 +785,7 @@ class MainWindow(QMainWindow):
                 self.active_operation = None
                 self._activate_new_operation(orders, fingerprint, Path(file_path).name)
             else:
+                self._pending_stock_import = None
                 self.pages.setCurrentWidget(self.editor_page)
             return
         if active is not None:
@@ -651,6 +804,7 @@ class MainWindow(QMainWindow):
             warning.addButton("CANCELAR", QMessageBox.ButtonRole.RejectRole)
             warning.exec()
             if warning.clickedButton() is not replace_button:
+                self._pending_stock_import = None
                 self.pages.setCurrentWidget(self.editor_page)
                 return
             self.active_operation_repository.clear_active()
@@ -689,6 +843,7 @@ class MainWindow(QMainWindow):
         canvas_layout.addWidget(self.roll_view, 1)
         layout.addWidget(canvas, 1)
         canvas.hide()
+        layout.addStretch(1)   # keeps the footer at the very bottom while the canvas is hidden
         footer = QHBoxLayout()
         self.used_length_label = QLabel("Comprimento utilizado: 0,00 m")
         footer.addWidget(self.used_length_label)

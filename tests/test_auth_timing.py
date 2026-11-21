@@ -14,9 +14,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QWidget
 from dtf_manager.core import auth_timing
-from dtf_manager.core.application_controller import ApplicationController
 from dtf_manager.services.api_client import ApiClient, ApiResult
-from tests.test_authentication import FakeClient, FakeManager, FakeReply, TOKENS
+from tests.license_fakes import FakeClient, FakeManager, FakeReply, TOKENS, active, build_controller
 from tests.session_fakes import FakeSessionStorage
 from dtf_manager.services.art_directory_scanner import scan_art_directory
 from dtf_manager.services.session_storage import SessionStorage, CREDENTIAL_USER
@@ -104,19 +103,18 @@ class AuthTimingTests(unittest.TestCase):
         client = FakeClient()
         window = QWidget()
         storage = FakeSessionStorage("saved-refresh")
-        controller = ApplicationController(self.app, client=client, storage=storage,
-                                           main_window_factory=lambda: window)
+        controller = build_controller(self.app, client, storage=storage, factory=lambda: window)
         output = io.StringIO()
         try:
             with contextlib.redirect_stdout(output), patch.dict(os.environ, {"DTF_AUTH_TIMING": "1"}):
                 auth_timing.start_application()
                 controller.start()
                 client.respond(ApiResult(200, data=TOKENS))
-                client.respond(ApiResult(200, data={"active": True, "status": "ACTIVE"}))
+                client.respond(active())
                 self.app.processEvents()
                 window.update()
                 self.app.processEvents()
-            self.assertEqual([call[0] for call in client.calls], ["/auth/refresh", "/license/status"])
+            self.assertEqual([call[0] for call in client.calls], ["/auth/refresh", "/licencas/status"])
             stages = re.findall(r"\[AUTH TIMING\] (\w+):", output.getvalue())
             stages = [stage for stage in stages if stage != "main_window_usable"]
             self.assertEqual(stages, ["app_start", "app_bootstrap", "session_lock", "credential_read",
@@ -126,5 +124,5 @@ class AuthTimingTests(unittest.TestCase):
         finally:
             controller.stop()
             controller._transitioning = True
-            controller.login_window.close()
+            controller._login_window = None  # never constructed on a valid restore
             window.close()

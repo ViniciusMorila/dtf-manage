@@ -12,16 +12,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
 
-from dtf_manager.core.application_controller import ApplicationController
 from dtf_manager.services.api_client import ApiClient, ApiResult
 from dtf_manager.services.auth_service import AuthService
-from tests.session_fakes import FakeSessionStorage
-from tests.test_authentication import FakeClient, FakeManager, FakeReply, TOKENS
+from tests.license_fakes import (
+    FakeClient, FakeManager, FakeReply, ROTATED, TOKENS, active, build_controller,
+    dispose_controller, http_error)
+from tests.session_fakes import MACHINE_ID, FakeSessionStorage
 
-
-ROTATED = {"access_token": "fake-new-access", "refresh_token": "fake-refresh-B",
-           "token_type": "bearer", "expires_in": 900}
-ACTIVE = {"active": True, "status": "ACTIVE"}
+ACTIVE = active().data
 
 
 class SessionLifecycleTests(unittest.TestCase):
@@ -34,19 +32,10 @@ class SessionLifecycleTests(unittest.TestCase):
         self.client = FakeClient()
         self.window = QWidget()
         self.factory = Mock(return_value=self.window)
-        self.controller = ApplicationController(self.app, client=self.client, storage=self.storage,
-                                                main_window_factory=self.factory)
-        self.addCleanup(self.dispose)
-
-    def dispose(self):
-        self.controller.stop()
-        self.controller._transitioning = True
-        self.controller.login_window.close()
-        self.controller.login_window.deleteLater()
-        self.window.close()
-        self.window.deleteLater()
-        self.controller.deleteLater()
-        self.app.processEvents()
+        self.controller = build_controller(self.app, self.client, storage=self.storage,
+                                           factory=self.factory)
+        self.controller.login_window  # most tests inspect the login form
+        self.addCleanup(lambda: dispose_controller(self.app, self.controller, self.window))
 
     def restore(self):
         self.storage.token = "fake-refresh-A"
@@ -55,7 +44,7 @@ class SessionLifecycleTests(unittest.TestCase):
     def authorize(self):
         self.controller.login("fake@example.com", "fake-password")
         self.client.respond(ApiResult(200, TOKENS))
-        self.client.respond(ApiResult(200, ACTIVE))
+        self.client.respond(active())
 
     def test_start_without_saved_refresh_shows_login_without_http(self):
         self.controller.start()
@@ -66,29 +55,31 @@ class SessionLifecycleTests(unittest.TestCase):
 
     def test_restoration_saves_rotated_token_before_license_and_opens_after_active(self):
         self.restore()
-        self.assertEqual(self.client.calls[0][:2], ("/auth/refresh", {"refresh_token": "fake-refresh-A"}))
+        self.assertEqual(self.client.calls[0][:2], ("/auth/refresh", {"refresh_token": "fake-refresh-A",
+                                                                     "id_maquina": MACHINE_ID}))
         self.factory.assert_not_called()
         self.client.respond(ApiResult(200, ROTATED))
         self.assertEqual(self.storage.saved, ["fake-refresh-B"])
         self.assertEqual(self.storage.token, "fake-refresh-B")
-        self.assertEqual(self.client.calls[-1][:2], ("/license/status", "fake-new-access"))
+        self.assertEqual(self.client.calls[-1][:2], ("/licencas/status", "fake-new-access"))
         self.factory.assert_not_called()
-        self.client.respond(ApiResult(200, ACTIVE))
+        self.client.respond(active())
         self.factory.assert_called_once_with()
 
-    def test_license_pending_after_restore_never_opens_main(self):
+    def test_expired_license_after_restore_never_opens_main_and_asks_for_a_key(self):
         self.restore()
         self.client.respond(ApiResult(200, ROTATED))
-        self.client.respond(ApiResult(200, {"active": False, "status": "PENDING"}))
+        self.client.respond(http_error(403, "LICENCA_EXPIRADA"))
         self.factory.assert_not_called()
-        self.assertIn("não está ativa", self.controller.login_window.message.text())
+        self.assertTrue(self.controller.activation_window.isVisible())
+        self.assertIn("expirou", self.controller.activation_window.message.text())
         self.assertEqual(self.storage.token, "fake-refresh-B")
 
     def test_invalid_refresh_401_and_422_delete_saved_token(self):
         for status in [401, 422]:
             with self.subTest(status=status):
                 self.restore()
-                self.client.respond(ApiResult(status, error="http", error_code="INVALID_REFRESH_TOKEN"))
+                self.client.respond(http_error(status, "INVALID_REFRESH_TOKEN"))
                 self.assertIsNone(self.storage.token)
                 self.assertIsNone(self.controller.auth.access_token)
                 self.assertTrue(self.controller.login_window.enter.isEnabled())
@@ -115,14 +106,14 @@ class SessionLifecycleTests(unittest.TestCase):
         self.controller.login_window.enter.click()
         self.assertEqual(len(self.client.calls), 2)
         self.client.respond(ApiResult(200, ROTATED))
-        self.client.respond(ApiResult(200, ACTIVE))
+        self.client.respond(active())
         self.factory.assert_called_once()
 
     def test_retry_after_ambiguous_rotation_can_require_login_without_revoking_successor(self):
         self.restore()
         self.client.respond(ApiResult(error="network"))
         self.controller.login_window.enter.click()
-        self.client.respond(ApiResult(401, error="http", error_code="INVALID_REFRESH_TOKEN"))
+        self.client.respond(http_error(401, "INVALID_REFRESH_TOKEN"))
         self.assertIsNone(self.storage.token)
         self.assertEqual([call[0] for call in self.client.calls], ["/auth/refresh", "/auth/refresh"])
         self.factory.assert_not_called()
@@ -199,23 +190,23 @@ class SessionLifecycleTests(unittest.TestCase):
         script = """
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QWidget
-from dtf_manager.core.application_controller import ApplicationController
 from dtf_manager.services.api_client import ApiResult
+from tests.license_fakes import active, build_controller
 from tests.session_fakes import FakeSessionStorage
 class Client:
     calls = []
-    def post_json(self, path, payload, callback):
+    def post_json(self, path, payload, callback, **kwargs):
         self.calls.append(path)
         assert path == '/auth/refresh'
         callback(ApiResult(200, {'access_token':'fake-access', 'refresh_token':'fake-B',
                                 'token_type':'bearer', 'expires_in':900}))
     def get(self, path, callback, **kwargs):
         self.calls.append(path)
-        callback(ApiResult(200, {'active':True, 'status':'ACTIVE'}))
+        callback(active())
     def cancel_all(self): pass
 app = QApplication([])
 client, storage = Client(), FakeSessionStorage('fake-A')
-controller = ApplicationController(app, client=client, storage=storage, main_window_factory=QWidget)
+controller = build_controller(app, client, storage=storage, factory=QWidget)
 controller.start()
 assert controller.main_window is not None
 QTimer.singleShot(20, controller.main_window.close)
@@ -241,7 +232,7 @@ raise SystemExit(result)
     def test_logout_uses_latest_refresh_clears_both_tokens_and_returns_to_login(self):
         self.restore()
         self.client.respond(ApiResult(200, ROTATED))
-        self.client.respond(ApiResult(200, ACTIVE))
+        self.client.respond(active())
         self.controller.logout()
         self.assertEqual(self.client.calls[-1][:2], ("/auth/logout", {"refresh_token": "fake-refresh-B"}))
         calls = len(self.client.calls)
@@ -296,7 +287,7 @@ raise SystemExit(result)
         self.client.respond(ApiResult(200, {"status": "ok"}))
         self.assertIsNone(self.storage.token)
         self.factory.assert_not_called()
-        self.assertNotIn("/license/status", [call[0] for call in self.client.calls])
+        self.assertNotIn("/licencas/status", [call[0] for call in self.client.calls])
 
     def test_late_refresh_after_local_logout_never_restores_session(self):
         self.restore()
@@ -359,8 +350,8 @@ raise SystemExit(result)
         self.authorize()
         self.controller.refresh_session()
         self.client.respond(ApiResult(200, ROTATED))
-        self.assertEqual(self.client.calls[-1][:2], ("/license/status", "fake-new-access"))
-        self.client.respond(ApiResult(200, ACTIVE))
+        self.assertEqual(self.client.calls[-1][:2], ("/licencas/status", "fake-new-access"))
+        self.client.respond(active())
         self.factory.assert_called_once()
 
     def test_secrets_are_never_logged_or_shown_during_refresh_and_logout(self):
@@ -371,7 +362,7 @@ raise SystemExit(result)
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
                 self.restore()
                 self.client.respond(ApiResult(200, ROTATED))
-                self.client.respond(ApiResult(200, ACTIVE))
+                self.client.respond(active())
                 self.controller.logout()
                 self.client.respond(ApiResult(200, {"status": "ok"}))
             text = output.getvalue() + self.controller.login_window.message.text()

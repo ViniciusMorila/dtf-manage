@@ -3,7 +3,9 @@ __pycache__/
 .venv/
 venv/
 *.spec
-build/
+!build/dtf_manager.spec
+/build/*
+!/build/dtf_manager.spec
 dist/
 .build_check/
 backups/
