@@ -402,7 +402,7 @@ class StockTab(QWidget):
                             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                         item.setData(BASE_ROLE, band)
                         table.setItem(row, STOCK_COLUMN + kind, item)
-                    table.setRowHeight(row, 30)
+                    table.setRowHeight(row, 26)
             total_label = self._header_item("TOTAL GERAL")
             total_label.setBackground(QBrush(TOTAL_BG))
             table.setItem(total_row, 0, total_label)
@@ -420,7 +420,7 @@ class StockTab(QWidget):
             table.setColumnWidth(1, 70)
             table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
             table.setRowHeight(0, 28)
-            table.setRowHeight(total_row, 34)
+            table.setRowHeight(total_row, 32)
             table.set_stock_rows(range(HEADER_ROWS, total_row))
             self._structure, self._total_row = structure, total_row
         # values: updated in place, so an open editor survives the refresh
