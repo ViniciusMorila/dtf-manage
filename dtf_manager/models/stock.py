@@ -187,11 +187,16 @@ class FinalizeRow:
 class FinalizeSummary:
     rows: tuple[FinalizeRow, ...]
     pending: int
+    arts: tuple = ()               # ArtFinalizeRow items (estoque de estampas)
 
     @property
     def shortages(self) -> tuple[FinalizeRow, ...]:
         return tuple(row for row in self.rows if row.shortage > 0)
 
     @property
+    def art_shortages(self) -> tuple:
+        return tuple(row for row in self.arts if row.shortage > 0)
+
+    @property
     def needs_acknowledgement(self) -> bool:
-        return bool(self.shortages) or self.pending > 0
+        return bool(self.shortages) or bool(self.art_shortages) or self.pending > 0

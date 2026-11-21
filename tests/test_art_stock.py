@@ -1,5 +1,6 @@
 """Art stock rules without Qt: listing, one record per file, copy counting, futuro, move."""
 import unittest
+from unittest.mock import patch
 
 from dtf_manager.services.art_duplicates import find_identical
 from dtf_manager.services.art_folder_listing import list_art_files
@@ -7,6 +8,7 @@ from dtf_manager.services.print_plan_service import (
     PrintPlanValidationError, build_dtf_print_plan, count_art_copies,
 )
 from dtf_manager.services.stock_service import StockError
+from tests.stock_fakes import do_import, future_of, stock_of
 from tests.art_fakes import (
     linked_item, make_art, make_art_service, make_folder, make_item, make_order, row_of, sync,
 )
@@ -303,6 +305,116 @@ class DuplicateTests(unittest.TestCase):
         calls = []
         find_identical(list_art_files(unique), {}, save=calls.extend)
         self.assertEqual(calls, [])                                    # different sizes: no hashing
+
+
+class FinalizeWithArtsTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = make_folder()
+        self.a = make_art(self.folder, "a.png")
+        self.b = make_art(self.folder, "b.png")
+        self.arts, self.stock, self.path = make_art_service()
+        sync(self.arts, self.folder)
+        self.stock.bulk_add(10)
+        self.orders = [make_order("P1", linked_item("P1", self.a, 3, variation="Preta,G"),
+                                  linked_item("P1", self.b, 2, "S2", "Bege,M"))]
+        do_import(self.stock, self.orders)                          # shirts: Preta G 3, Bege M 2
+        self.arts.replace_future(count_art_copies(self.orders), reset_marks=True)
+        self.arts.set_stock(row_of(self.arts, "a.png").art_id, "5")
+        self.arts.set_stock(row_of(self.arts, "b.png").art_id, "1")  # b will be short by 1
+
+    def art(self, name):
+        return row_of(self.arts, name)
+
+    def test_summary_lists_shirts_and_arts_together(self):
+        summary = self.stock.finalize_summary(self.arts)
+        self.assertEqual(len(summary.rows), 2)
+        self.assertEqual([(r.name, r.future, r.stock, r.after, r.shortage) for r in summary.arts],
+                         [("a.png", 3, 5, 2, 0), ("b.png", 2, 1, 0, 1)])
+        self.assertEqual([r.name for r in summary.art_shortages], ["b.png"])
+        self.assertTrue(summary.needs_acknowledgement)
+
+    def test_finalize_deducts_shirts_and_arts_together_clamps_and_clears(self):
+        result = self.stock.finalize(self.arts)
+        self.assertEqual(stock_of(self.stock, "Preta", "G"), 7)
+        self.assertEqual(stock_of(self.stock, "Bege", "M"), 8)
+        self.assertEqual(self.art("a.png").stock, 2)
+        self.assertEqual(self.art("b.png").stock, 0)                # never negative
+        self.assertEqual((self.art("a.png").future, self.art("b.png").future), (0, 0))
+        self.assertFalse(self.arts.snapshot().has_future)
+        self.assertFalse(self.stock.snapshot().has_future)
+        self.assertEqual(len(result.rows), 2)
+        self.assertEqual(len(result.arts), 2)
+        moves = [m for m in self.stock.movements() if m.produto == "estampa"
+                 and m.kind == "finalizacao"]
+        self.assertEqual(sorted((m.color, m.before, m.after) for m in moves),
+                         [("a.png", 5, 2), ("b.png", 1, 0)])
+        short = [m for m in moves if m.color == "b.png"][0]
+        self.assertIn("faltaram 1", short.note)
+
+    def test_finalize_without_any_shortage(self):
+        self.arts.set_stock(self.art("b.png").art_id, "9")
+        summary = self.stock.finalize_summary(self.arts)
+        self.assertEqual(summary.art_shortages, ())
+        self.assertFalse(summary.needs_acknowledgement)
+        self.stock.finalize(self.arts)
+        self.assertEqual(self.art("b.png").stock, 7)
+
+    def test_both_parts_are_saved_or_neither(self):
+        before = (stock_of(self.stock, "Preta", "G"), self.art("a.png").stock,
+                  self.art("a.png").future, future_of(self.stock, "Preta", "G"))
+
+        def boom(db):
+            raise RuntimeError("disk full")
+
+        with patch.object(self.arts, "finalize_apply", side_effect=boom):
+            with self.assertRaises(RuntimeError):
+                self.stock.finalize(self.arts)
+        after = (stock_of(self.stock, "Preta", "G"), self.art("a.png").stock,
+                 self.art("a.png").future, future_of(self.stock, "Preta", "G"))
+        self.assertEqual(after, before)                             # nothing was half-applied
+        self.assertTrue(self.stock.snapshot().has_future)
+        self.assertEqual(self.stock.finalize_summary(self.arts).rows[0].future, 3)
+        self.assertEqual([m for m in self.stock.movements() if m.kind == "finalizacao"], [])
+        self.assertIsNotNone(self.stock.finalize(self.arts))        # and it works afterwards
+
+    def test_a_second_finalize_does_nothing(self):
+        self.assertIsNotNone(self.stock.finalize(self.arts))
+        self.assertIsNone(self.stock.finalize(self.arts))
+        self.assertEqual(self.art("a.png").stock, 2)
+
+    def test_only_arts_in_the_future_still_finalizes(self):
+        self.stock.cancel_current_import(self.arts)
+        self.arts.replace_future(count_art_copies(self.orders))
+        self.assertTrue(self.arts.has_future())
+        self.assertFalse(self.stock.snapshot().has_future)
+        self.assertIsNotNone(self.stock.finalize_summary(self.arts))
+        self.stock.finalize(self.arts)
+        self.assertEqual(self.art("a.png").stock, 2)
+
+    def test_cancelling_clears_both_futures_and_leaves_the_stock(self):
+        self.assertTrue(self.stock.cancel_current_import(self.arts))
+        self.assertFalse(self.arts.snapshot().has_future)
+        self.assertFalse(self.stock.snapshot().has_future)
+        self.assertEqual(self.art("a.png").stock, 5)
+        notes = [m.note for m in self.stock.movements() if m.produto == "estampa"]
+        self.assertIn("Operação cancelada", notes)
+
+    def test_everything_survives_reopening_after_finalizing(self):
+        self.stock.finalize(self.arts)
+        reopened, stock2, _ = make_art_service(self.path)
+        self.assertEqual(row_of(reopened, "a.png").stock, 2)
+        self.assertFalse(reopened.has_future())
+        self.assertIn("P1", stock2.finalized_info(["P1"]))
+
+    def test_finalized_orders_are_excluded_from_the_art_future_too(self):
+        self.stock.finalize(self.arts)
+        again = [make_order("P1", linked_item("P1", self.a, 3)),
+                 make_order("N1", linked_item("N1", self.b, 4, "S9"))]
+        finalized = self.stock.finalized_info([o.platform_order_number for o in again])
+        counted = [o for o in again if o.platform_order_number not in finalized]
+        self.arts.replace_future(count_art_copies(counted), reset_marks=True)
+        self.assertEqual(self.art("a.png").future, 0)               # P1 was already deducted
+        self.assertEqual(self.art("b.png").future, 4)
 
 
 if __name__ == "__main__":
