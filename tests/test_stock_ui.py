@@ -109,61 +109,76 @@ class ControllerBase(unittest.TestCase):
         self.controller.apply_import(decision)
         return decision
 
-    def cell(self, table, color, size):
-        colors = [c.name for c in self.service.snapshot().colors]
-        sizes = [s.name for s in self.service.snapshot().sizes]
-        return table.item(colors.index(color), sizes.index(size))
+    def cell(self, kind, color, size):
+        """kind: "stock" | "future" | "balance" -> the item in the single matrix table."""
+        snap = self.service.snapshot()
+        row = [c.name for c in snap.colors].index(color) + 2
+        column = 1 + 3 * [s.name for s in snap.sizes].index(size) + ("stock", "future", "balance").index(kind)
+        return self.tab.matrix.item(row, column)
 
 
 class TabTests(ControllerBase):
-    def test_three_views_with_zero_stock_and_the_balance(self):
-        self.assertEqual(self.tab.stock_table.rowCount(), 4)
-        self.assertEqual(self.tab.stock_table.columnCount(), 4)
-        self.assertEqual(self.cell(self.tab.stock_table, "Preta", "G").text(), "0")
+    def test_one_table_with_stock_future_and_balance_side_by_side(self):
+        matrix = self.tab.matrix
+        self.assertEqual(matrix.rowCount(), 2 + 4)                 # 2 header rows + colors
+        self.assertEqual(matrix.columnCount(), 1 + 3 * 4)          # color + 3 per size
+        self.assertEqual([matrix.item(1, c).text() for c in (1, 2, 3)],
+                         ["Estoque", "Futuro", "Saldo"])
+        self.assertEqual(matrix.item(0, 1).text(), "P")
+        self.assertEqual(matrix.columnSpan(0, 1), 3)
+        for kind in ("stock", "future", "balance"):
+            self.assertEqual(self.cell(kind, "Preta", "G").text(), "0")
         self.service.bulk_add(2)
         self.run_import(self.orders(n=5, variation="Preta,G"))           # needs 5, has 2
-        self.assertEqual(self.cell(self.tab.future_table, "Preta", "G").text(), "5")
-        balance = self.cell(self.tab.balance_table, "Preta", "G")
+        self.assertEqual(self.cell("future", "Preta", "G").text(), "5")
+        balance = self.cell("balance", "Preta", "G")
         self.assertEqual(balance.text(), "-3")
         self.assertEqual(balance.foreground().color(), NEGATIVE)
-        self.assertEqual(self.cell(self.tab.balance_table, "Bege", "M").text(), "2")
-        self.assertFalse(bool(self.cell(self.tab.future_table, "Preta", "G").flags()
-                              & Qt.ItemFlag.ItemIsEditable))
-        self.assertTrue(bool(self.cell(self.tab.stock_table, "Preta", "G").flags()
-                             & Qt.ItemFlag.ItemIsEditable))
-        self.tab.view_buttons[2].click()
-        self.assertIs(self.tab.pages.currentWidget(), self.tab.balance_table)
+        self.assertEqual(self.cell("balance", "Bege", "M").text(), "2")
+        editable = Qt.ItemFlag.ItemIsEditable
+        self.assertFalse(bool(self.cell("future", "Preta", "G").flags() & editable))
+        self.assertFalse(bool(self.cell("balance", "Preta", "G").flags() & editable))
+        self.assertTrue(bool(self.cell("stock", "Preta", "G").flags() & editable))
+
+    def test_color_column_is_painted_with_the_shirt_color(self):
+        from dtf_manager.ui.pages.stock_tab import shirt_colors
+        matrix = self.tab.matrix
+        names = [matrix.item(r, 0).text() for r in range(2, 6)]
+        self.assertEqual(names, ["●  Preta", "●  Marrom", "●  Bege", "●  Branca"])
+        for row, color in enumerate(("Preta", "Marrom", "Bege", "Branca"), start=2):
+            self.assertEqual(matrix.item(row, 0).background().color(), shirt_colors(color)[0])
+        self.assertNotEqual(shirt_colors("Preta")[0], shirt_colors("Branca")[0])
 
     def test_editing_a_stock_cell_saves_and_invalid_text_is_refused(self):
-        self.cell(self.tab.stock_table, "Preta", "M").setText("7")
+        self.cell("stock", "Preta", "M").setText("7")
         self.app.processEvents()
         self.assertEqual(stock_of(self.service, "Preta", "M"), 7)
-        self.cell(self.tab.stock_table, "Preta", "M").setText("-4")
+        self.cell("stock", "Preta", "M").setText("-4")
         self.app.processEvents()
         self.assertEqual(stock_of(self.service, "Preta", "M"), 7)
-        self.assertEqual(self.cell(self.tab.stock_table, "Preta", "M").text(), "7")
+        self.assertEqual(self.cell("stock", "Preta", "M").text(), "7")
         self.assertEqual(len(self.prompts.warnings), 1)
 
     def test_new_color_and_size_refuse_duplicates(self):
         self.prompts.names = ["Azul"]
         self.controller.new_color()
-        self.assertEqual(self.tab.stock_table.rowCount(), 5)
+        self.assertEqual(self.tab.matrix.rowCount(), 2 + 5)
         self.prompts.names = ["PRETA"]
         self.controller.new_color()
-        self.assertEqual(self.tab.stock_table.rowCount(), 5)
+        self.assertEqual(self.tab.matrix.rowCount(), 2 + 5)
         self.assertEqual(len(self.prompts.warnings), 1)
         self.prompts.names = ["xg"]
         self.controller.new_size()
-        self.assertEqual(self.tab.stock_table.columnCount(), 5)
+        self.assertEqual(self.tab.matrix.columnCount(), 1 + 3 * 5)
         self.prompts.names = [None]
         self.controller.new_size()                                       # cancelled
-        self.assertEqual(self.tab.stock_table.columnCount(), 5)
+        self.assertEqual(self.tab.matrix.columnCount(), 1 + 3 * 5)
 
     def test_bulk_add_through_the_controller(self):
         self.prompts.bulk_answer = (3, self.colors["Bege"], None)
         self.controller.bulk_add()
-        self.assertEqual(self.cell(self.tab.stock_table, "Bege", "GG").text(), "3")
-        self.assertEqual(self.cell(self.tab.stock_table, "Preta", "GG").text(), "0")
+        self.assertEqual(self.cell("stock", "Bege", "GG").text(), "3")
+        self.assertEqual(self.cell("stock", "Preta", "GG").text(), "0")
         self.prompts.bulk_answer = None
         self.controller.bulk_add()
         self.assertEqual(stock_of(self.service, "Bege", "GG"), 3)
@@ -347,7 +362,7 @@ class FinalizeFlowTests(ControllerBase):
         self.run_import(self.orders(n=4))
         self.assertTrue(self.controller.finalize())
         self.assertEqual(stock_of(self.service, "Preta", "G"), 6)
-        self.assertEqual(self.cell(self.tab.stock_table, "Preta", "G").text(), "6")
+        self.assertEqual(self.cell("stock", "Preta", "G").text(), "6")
         self.assertFalse(self.controller.has_future)
         self.assertFalse(self.enabled[-1])
 

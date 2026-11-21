@@ -4,13 +4,37 @@ Only shows data and emits signals; the StockController decides everything."""
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QHBoxLayout, QHeaderView, QLabel, QPushButton,
-    QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QPushButton, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
+
+from dtf_manager.utils.stock_names import normalize_name
 
 NEGATIVE = QColor("#ff5a75")
 WARNING = QColor("#e69b45")
-VIEWS = (("Estoque", "stockView"), ("Futuro", "futureView"), ("Saldo total", "balanceView"))
+HEADER_ROWS = 2                 # row 0: size name, row 1: Estoque / Futuro / Saldo
+KINDS = ("Estoque", "Futuro", "Saldo")
+HEADER_BG = QColor("#100b0d")
+HEADER_FG = QColor("#c9bcc0")
+
+# shirt color name -> (background, text). Unknown colors get a neutral box.
+SHIRT_COLORS = {
+    "preta": ("#16161b", "#f1eaec"), "preto": ("#16161b", "#f1eaec"),
+    "marrom": ("#6f4a2f", "#fbf3ee"),
+    "bege": ("#dcc7a1", "#2a2118"),
+    "branca": ("#f4f1ec", "#1b1b1b"), "branco": ("#f4f1ec", "#1b1b1b"),
+    "azul": ("#2a56b8", "#ffffff"), "vermelha": ("#b3202e", "#ffffff"),
+    "vermelho": ("#b3202e", "#ffffff"), "verde": ("#2e7d4f", "#ffffff"),
+    "cinza": ("#8a8d93", "#101010"), "amarela": ("#e8c53a", "#201a05"),
+    "amarelo": ("#e8c53a", "#201a05"), "rosa": ("#e58fb0", "#2a0f19"),
+    "laranja": ("#e07b24", "#1f0f02"), "roxa": ("#6b3fa0", "#ffffff"),
+    "roxo": ("#6b3fa0", "#ffffff"), "off white": ("#ece6d6", "#1b1b1b"),
+}
+
+
+def shirt_colors(name: str) -> tuple[QColor, QColor]:
+    background, text = SHIRT_COLORS.get(normalize_name(name), ("#2a2a30", "#eeeeee"))
+    return QColor(background), QColor(text)
 
 
 def _table(name: str, rows: int = 0, columns: int = 0) -> QTableWidget:
@@ -66,50 +90,28 @@ class StockTab(QWidget):
             buttons.addWidget(button)
         buttons.addStretch()
         left.addLayout(buttons)
-        views = QHBoxLayout()
-        views.setSpacing(6)
-        self.view_group = QButtonGroup(self)
-        self.view_group.setExclusive(True)
-        self.view_buttons = []
-        for index, (text, name) in enumerate(VIEWS):
-            button = QPushButton(text)
-            button.setObjectName("stockViewButton")
-            button.setCheckable(True)
-            self.view_group.addButton(button, index)
-            self.view_buttons.append(button)
-            views.addWidget(button)
-        views.addStretch()
-        left.addLayout(views)
         self.note_label = QLabel()
         self.note_label.setObjectName("muted")
         self.note_label.setWordWrap(True)
         left.addWidget(self.note_label)
-        self.pages = QStackedWidget()
         self.stock_table = _table("stockTable")
-        self.future_table = _table("futureTable")
-        self.balance_table = _table("balanceTable")
-        for table in (self.future_table, self.balance_table, self.stock_table):
-            table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        for table in (self.future_table, self.balance_table):
-            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.stock_table.setEditTriggers(
+        self.matrix = self.stock_table
+        self.matrix.horizontalHeader().hide()
+        self.matrix.verticalHeader().hide()
+        self.matrix.setAlternatingRowColors(False)
+        self.matrix.setEditTriggers(
             QAbstractItemView.EditTrigger.DoubleClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
             | QAbstractItemView.EditTrigger.AnyKeyPressed)
-        self.stock_table.itemChanged.connect(self._stock_item_changed)
-        for table in (self.stock_table, self.future_table, self.balance_table):
-            self.pages.addWidget(table)
-        left.addWidget(self.pages, 1)
+        self.matrix.itemChanged.connect(self._stock_item_changed)
+        left.addWidget(self.matrix, 1)
         self.hint_label = QLabel(
-            "Estoque: dê dois cliques numa célula para editar. Futuro: o que os pedidos "
-            "importados vão consumir. Saldo total = Estoque − Futuro. "
+            "Estoque: dê dois cliques na célula para editar. Futuro: o que os pedidos importados "
+            "vão consumir. Saldo = Estoque − Futuro (vermelho quando negativo). "
             "Cada nova importação substitui o futuro atual.")
         self.hint_label.setObjectName("muted")
         self.hint_label.setWordWrap(True)
         left.addWidget(self.hint_label)
-        self.view_group.idClicked.connect(self.pages.setCurrentIndex)
-        self.view_buttons[0].setChecked(True)
         return left
 
     def _build_right(self) -> QVBoxLayout:
@@ -162,30 +164,67 @@ class StockTab(QWidget):
         finally:
             self._rendering = False
 
+    @staticmethod
+    def _header_item(text: str) -> QTableWidgetItem:
+        item = QTableWidgetItem(text)
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setBackground(QBrush(HEADER_BG))
+        item.setForeground(QBrush(HEADER_FG))
+        font = item.font()
+        font.setBold(True)
+        item.setFont(font)
+        return item
+
     def _fill_matrix(self, snapshot) -> None:
-        for kind, table in (("stock", self.stock_table), ("future", self.future_table),
-                            ("balance", self.balance_table)):
-            blocker = QSignalBlocker(table)
-            table.clear()
-            table.setRowCount(len(snapshot.colors))
-            table.setColumnCount(len(snapshot.sizes))
-            table.setHorizontalHeaderLabels([s.name for s in snapshot.sizes])
-            table.setVerticalHeaderLabels([c.name for c in snapshot.colors])
-            for row, color in enumerate(snapshot.colors):
-                for column, size in enumerate(snapshot.sizes):
-                    key = (color.id, size.id)
-                    stock, future = snapshot.stock.get(key, 0), snapshot.future.get(key, 0)
-                    value = {"stock": stock, "future": future, "balance": stock - future}[kind]
+        """One table: colors down, and for each size three columns side by side
+        (Estoque | Futuro | Saldo)."""
+        table = self.matrix
+        blocker = QSignalBlocker(table)
+        table.clear()
+        table.clearSpans()
+        table.setRowCount(HEADER_ROWS + len(snapshot.colors))
+        table.setColumnCount(1 + 3 * len(snapshot.sizes))
+        table.setItem(0, 0, self._header_item("COR"))
+        table.setSpan(0, 0, HEADER_ROWS, 1)
+        for index, size in enumerate(snapshot.sizes):
+            first = 1 + 3 * index
+            table.setItem(0, first, self._header_item(size.name))
+            table.setSpan(0, first, 1, 3)
+            for offset, kind in enumerate(KINDS):
+                table.setItem(1, first + offset, self._header_item(kind))
+        for row, color in enumerate(snapshot.colors, start=HEADER_ROWS):
+            background, text = shirt_colors(color.name)
+            label = self._header_item(f"●  {color.name}")
+            label.setBackground(QBrush(background))
+            label.setForeground(QBrush(text))
+            label.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            table.setItem(row, 0, label)
+            for index, size in enumerate(snapshot.sizes):
+                key = (color.id, size.id)
+                stock, future = snapshot.stock.get(key, 0), snapshot.future.get(key, 0)
+                for offset, value in enumerate((stock, future, stock - future)):
                     item = QTableWidgetItem(str(value))
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    if kind != "stock":
+                    if offset > 0:
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    if kind == "balance" and value < 0:
+                    if offset == 1 and value > 0:
+                        item.setForeground(QBrush(WARNING))
+                    if offset == 2 and value < 0:
                         item.setForeground(QBrush(NEGATIVE))
                         item.setBackground(QBrush(QColor("#3a0d17")))
                         item.setToolTip("Saldo negativo: faltam camisetas para os pedidos.")
-                    table.setItem(row, column, item)
-            del blocker
+                    table.setItem(row, 1 + 3 * index + offset, item)
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        table.setColumnWidth(0, 130)
+        table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        table.setRowHeight(0, 28)
+        table.setRowHeight(1, 24)
+        for row in range(HEADER_ROWS, table.rowCount()):
+            table.setRowHeight(row, 52)
+        del blocker
 
     def _fill_separation(self, snapshot) -> None:
         table = self.separation_table
@@ -234,10 +273,13 @@ class StockTab(QWidget):
 
     # ---- user edits ------------------------------------------------------------------
     def _stock_item_changed(self, item) -> None:
-        if self._rendering:
+        if self._rendering or item.row() < HEADER_ROWS or item.column() < 1:
+            return
+        size_index, kind = divmod(item.column() - 1, 3)
+        if kind != 0:                       # only the Estoque column is editable
             return
         self.stock_edit_requested.emit(
-            self._color_ids[item.row()], self._size_ids[item.column()], item.text())
+            self._color_ids[item.row() - HEADER_ROWS], self._size_ids[size_index], item.text())
 
     def _separated_item_changed(self, item) -> None:
         if self._rendering or item.column() != 5:
