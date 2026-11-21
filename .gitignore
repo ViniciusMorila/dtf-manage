@@ -29,3 +29,6 @@ service-account*.json
 # Arquivos temporários e logs
 *.tmp
 *.log
+
+# Instalador gerado (Inno Setup)
+installer_output/

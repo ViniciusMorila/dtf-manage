@@ -1,3 +1,5 @@
 """DTF Manager application package."""
 
-__version__ = "0.1.0"
+from dtf_manager.core.version import APP_VERSION
+
+__version__ = APP_VERSION

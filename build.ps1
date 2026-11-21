@@ -1,11 +1,14 @@
 <#
 .SYNOPSIS
-  Builds the DTF Manager executable with PyInstaller (no installer is generated).
+  Builds the DTF Manager executable with PyInstaller and the Windows installer (Inno Setup 6).
 
 .DESCRIPTION
-  Output: dist\DTFManager\DTFManager.exe (one-folder build).
+  Output: dist\DTFManager\DTFManager.exe (one-folder build) and
+  installer_output\DTFManager-Setup-<version>.exe (+ .sha256).
+  The version comes from dtf_manager\core\version.py (single source, also used by installer.iss).
   After building, the frozen executable runs "--self-check" to prove that the
   SMBIOS reading (ctypes) and DPAPI work inside the packaged build.
+  The release gate runs first; the installer is only generated after everything passed.
 
 .EXAMPLE
   .\build.ps1                  # build and self-check
@@ -22,6 +25,26 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+
+# Single source of the version: dtf_manager\core\version.py (APP_VERSION = "x.y.z").
+$versionFile = Join-Path $PSScriptRoot "dtf_manager\core\version.py"
+$versionMatch = Select-String -Path $versionFile -Pattern '^APP_VERSION\s*=\s*"(\d+\.\d+\.\d+)"' | Select-Object -First 1
+if (-not $versionMatch) { throw "APP_VERSION (x.y.z) not found in $versionFile" }
+$appVersion = $versionMatch.Matches[0].Groups[1].Value
+Write-Host "DTF Manager version: $appVersion"
+
+function Find-InnoCompiler {
+    $candidates = @(
+        (Get-Command ISCC.exe -ErrorAction SilentlyContinue | ForEach-Object { $_.Source }),
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+        (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe")
+    )
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) { return $candidate }
+    }
+    return $null
+}
 
 if ($InstallDeps) {
     & $Python -m pip install -r requirements.txt
@@ -57,6 +80,14 @@ if ($gateExit -ne 0) {
     throw "Build abortado: corrija dtf_manager\data\app_config.json e dtf_manager\data\planos.json (veja as mensagens acima)."
 }
 
+$iscc = Find-InnoCompiler
+if (-not $iscc) {
+    throw ("Inno Setup 6 nao encontrado (ISCC.exe). Instale em https://jrsoftware.org/isdl.php " +
+           "(Inno Setup 6.x) no caminho padrao: C:\Program Files (x86)\Inno Setup 6\ISCC.exe " +
+           "(ou C:\Program Files\Inno Setup 6\, ou %LOCALAPPDATA%\Programs\Inno Setup 6\), " +
+           "ou coloque a pasta do ISCC.exe no PATH.")
+}
+
 & $Python -m PyInstaller --noconfirm --clean --distpath dist --workpath build\_work build\dtf_manager.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
@@ -76,3 +107,19 @@ if ($process.ExitCode -ne 0) {
 }
 
 Write-Host "Build OK: $exe"
+
+# Installer (only after the release gate, the build and the self-check passed).
+$outputDir = Join-Path $PSScriptRoot "installer_output"
+$setupName = "DTFManager-Setup-$appVersion.exe"
+$setupPath = Join-Path $outputDir $setupName
+if (Test-Path $setupPath) { Remove-Item -Force $setupPath }
+& $iscc "/DAppVersion=$appVersion" (Join-Path $PSScriptRoot "installer.iss")
+if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed (exit code $LASTEXITCODE)" }
+if (-not (Test-Path $setupPath)) { throw "Installer not found: $setupPath" }
+
+$hash = (Get-FileHash -Algorithm SHA256 -Path $setupPath).Hash.ToLower()
+$hashFile = Join-Path $outputDir "DTFManager-Setup-$appVersion.sha256"
+[System.IO.File]::WriteAllText($hashFile, "$hash *$setupName`n", (New-Object System.Text.UTF8Encoding($false)))
+Write-Host "Installer OK: $setupPath"
+Write-Host "SHA-256: $hash"
+Write-Host "Hash file: $hashFile"
