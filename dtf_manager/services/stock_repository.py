@@ -68,6 +68,15 @@ class StockRepository:
                                (name, normalize_name(name)))
             return StockColor(cursor.lastrowid, name)
 
+    def delete_color(self, color_id: int, db=None) -> None:
+        """Removes the color and everything that points to it."""
+        with self.tx(db) as c:
+            c.execute("DELETE FROM stock_levels WHERE color_id=?", (color_id,))
+            c.execute("DELETE FROM stock_future WHERE color_id=?", (color_id,))
+            c.execute("DELETE FROM stock_sku_colors WHERE color_id=?", (color_id,))
+            c.execute("DELETE FROM stock_aliases WHERE kind='color' AND target_id=?", (color_id,))
+            c.execute("DELETE FROM stock_colors WHERE id=?", (color_id,))
+
     def add_size(self, name: str, db=None) -> StockSize:
         with self.tx(db) as c:
             cursor = c.execute("INSERT INTO stock_sizes(name, norm) VALUES(?,?)",

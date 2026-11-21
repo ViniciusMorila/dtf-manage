@@ -101,6 +101,55 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(len(reopened.movements()), 1)
 
 
+class DeleteColorTests(unittest.TestCase):
+    def setUp(self):
+        self.service, self.path = make_service()
+        self.colors, self.sizes = ids(self.service)
+
+    def test_deleting_a_color_removes_its_stock_future_and_mappings_but_keeps_history(self):
+        green = self.service.add_color("Verde").id
+        self.service.set_stock(green, self.sizes["M"], "6")
+        do_import(self.service, [make_order("A", ("Verde,M", 2), ("Preta,G", 1))])
+        self.assertEqual(self.service.preview_delete_color(green), ("Verde", 6, 2))
+        self.service.replace_aliases([("color", "esmeralda", green), ("color", "negro", self.colors["Preta"])])
+        self.service.repository.set_sku_color("sku-v", green)
+        self.assertEqual(self.service.delete_color(green), ("Verde", 6, 2))
+        snap = self.service.snapshot()
+        self.assertNotIn("Verde", [c.name for c in snap.colors])
+        self.assertNotIn(green, [k[0] for k in snap.stock])
+        self.assertNotIn(green, [k[0] for k in snap.future])
+        self.assertEqual(future_of(self.service, "Preta", "G"), 1)           # others untouched
+        self.assertEqual([a[1] for a in self.service.repository.aliases() if a[2] == green], [])
+        self.assertIn("negro", [a[1] for a in self.service.repository.aliases()])
+        self.assertEqual(self.service.repository.sku_colors(), {})
+        notes = [(m.kind, m.scope, m.color, m.before, m.after, m.note) for m in self.service.movements()
+                 if m.note == "Cor excluída"]
+        self.assertIn(("ajuste_manual", "estoque", "Verde", 6, 0, "Cor excluída"), notes)
+        self.assertIn(("importacao", "futuro", "Verde", 2, 0, "Cor excluída"), notes)
+        self.assertTrue(any(m.color == "Verde" for m in self.service.movements()))   # history kept
+
+    def test_the_name_can_be_registered_again_and_the_total_still_balances(self):
+        green = self.service.add_color("Verde").id
+        self.service.delete_color(green)
+        again = self.service.add_color("verde")
+        self.assertEqual(stock_of(self.service, "verde", "P"), 0)
+        self.assertNotEqual(again.id, green)
+
+    def test_a_color_that_no_longer_exists_is_refused_and_survives_reopening(self):
+        green = self.service.add_color("Verde").id
+        self.service.delete_color(green)
+        with self.assertRaises(StockError):
+            self.service.delete_color(green)
+        reopened, _ = make_service(self.path)
+        self.assertNotIn("Verde", [c.name for c in reopened.snapshot().colors])
+
+    def test_imports_after_deleting_ask_about_that_color_again(self):
+        green = self.service.add_color("Verde").id
+        self.service.delete_color(green)
+        prep = self.service.prepare_import([make_order("A", ("Verde,M", 1, "S-V"))])
+        self.assertEqual(len(prep.lines), 1)
+
+
 class BackupTests(unittest.TestCase):
     def test_existing_database_is_copied_once_before_the_stock_migration(self):
         folder = Path(tempfile.mkdtemp())

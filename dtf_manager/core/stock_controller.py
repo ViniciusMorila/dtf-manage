@@ -33,6 +33,7 @@ class StockController(QObject):
         if tab is not None:
             tab.new_color_requested.connect(self.new_color)
             tab.new_size_requested.connect(self.new_size)
+            tab.delete_color_requested.connect(self.delete_color)
             tab.bulk_requested.connect(self.bulk_add)
             tab.aliases_requested.connect(self.edit_aliases)
             tab.history_requested.connect(self.show_history)
@@ -76,6 +77,25 @@ class StockController(QObject):
         _, ok = self._try(self.service.add_size, name)
         if ok:
             self.refresh()
+
+    def delete_color(self, color_id: int = -1) -> bool:
+        """Removes a color. color_id -1 = ask which one. Always asks for confirmation and says
+        what will be discarded."""
+        snapshot = self.service.snapshot()
+        if color_id < 0:
+            color_id = self.prompts.choose_color(snapshot.colors)
+            if color_id is None:
+                return False
+        preview, ok = self._try(self.service.preview_delete_color, color_id)
+        if not ok:
+            self.refresh()
+            return False
+        name, stock, future = preview
+        if not self.prompts.confirm_delete_color(name, stock, future):
+            return False
+        _, ok = self._try(self.service.delete_color, color_id)
+        self.refresh()
+        return ok
 
     def edit_aliases(self) -> None:
         snapshot = self.service.snapshot()

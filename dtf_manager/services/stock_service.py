@@ -91,6 +91,36 @@ class StockService:
         return found if found is not None else self.repository.add_size(
             " ".join(value.split()), db=db).id
 
+    def preview_delete_color(self, color_id: int):
+        """(name, units in stock, units in the futuro) of a color that is about to be removed."""
+        repo = self.repository
+        with repo.tx() as db:
+            color = next((c for c in repo.colors(db) if c.id == color_id), None)
+            if color is None:
+                raise StockError("Essa cor não existe mais.")
+            stock = sum(q for (cid, _), q in repo.levels(db).items() if cid == color_id)
+            future = sum(q for (cid, _), (q, _) in repo.future(db).items() if cid == color_id)
+        return color.name, stock, future
+
+    def delete_color(self, color_id: int) -> tuple[str, int, int]:
+        """Removes a color with its stock, futuro, SKU mappings and equivalences (one
+        transaction). What it held is logged as manual adjustments to 0 so the history keeps it.
+        Past movements keep the color name as text."""
+        repo = self.repository
+        with repo.tx() as db:
+            name, stock, future = self.preview_delete_color(color_id)
+            sizes = {s.id: s.name for s in repo.sizes(db)}
+            for (cid, sid), quantity in sorted(repo.levels(db).items()):
+                if cid == color_id and quantity > 0:
+                    repo.add_movement(MOVEMENT_MANUAL, "estoque", name, sizes[sid], quantity, 0,
+                                      note="Cor excluída", db=db)
+            for (cid, sid), (quantity, _) in sorted(repo.future(db).items()):
+                if cid == color_id:
+                    repo.add_movement(MOVEMENT_IMPORT, "futuro", name, sizes[sid], quantity, 0,
+                                      note="Cor excluída", db=db)
+            repo.delete_color(color_id, db=db)
+        return name, stock, future
+
     def replace_aliases(self, rows) -> None:
         """rows: (kind, text, target_id). Text is normalized; empty or duplicate rows ignored."""
         clean = {}

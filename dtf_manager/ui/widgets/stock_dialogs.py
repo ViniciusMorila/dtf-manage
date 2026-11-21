@@ -511,6 +511,23 @@ class StockPrompts:
         text, ok = QInputDialog.getText(self.parent, title, label)
         return text if ok else None
 
+    def choose_color(self, colors):
+        names = [c.name for c in colors]
+        if not names:
+            return None
+        name, ok = QInputDialog.getItem(self.parent, "Excluir cor", "Qual cor excluir?",
+                                        names, 0, False)
+        return colors[names.index(name)].id if ok else None
+
+    def confirm_delete_color(self, name: str, stock: int, future: int) -> bool:
+        text = f"Excluir a cor \"{name}\"?"
+        if stock or future:
+            text += (f"\n\nEla tem {stock} camiseta(s) em estoque e {future} no futuro. "
+                     "Esses números serão descartados (ficam registrados no histórico).")
+        text += "\n\nVocê pode cadastrar a cor de novo depois."
+        answer = QMessageBox.question(self.parent, "Excluir cor", text)
+        return answer == QMessageBox.StandardButton.Yes
+
     def info(self, title: str, text: str) -> None:
         QMessageBox.information(self.parent, title, text)
 

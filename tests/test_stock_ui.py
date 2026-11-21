@@ -48,6 +48,14 @@ class FakePrompts:
         self.bulk_answer = None
         self.aliases_answer = None
         self.history_calls = []
+        self.delete_choice, self.delete_confirm, self.delete_confirms = None, True, []
+
+    def choose_color(self, colors):
+        return self.delete_choice
+
+    def confirm_delete_color(self, name, stock, future):
+        self.delete_confirms.append((name, stock, future))
+        return self.delete_confirm
 
     def ask_name(self, title, label):
         return self.names.pop(0) if self.names else None
@@ -183,6 +191,32 @@ class TabTests(ControllerBase):
         self.prompts.names = [None]
         self.controller.new_size()                                       # cancelled
         self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 5 + 1)
+
+    def test_delete_color_button_asks_which_color_and_confirms(self):
+        self.prompts.names = ["Verde"]
+        self.controller.new_color()
+        green = ids(self.service)[0]["Verde"]
+        self.service.set_stock(green, self.sizes["P"], "3")
+        self.controller.refresh()
+        rows_before = self.tab.matrix.rowCount()
+        self.prompts.delete_choice = None                                   # cancelled at the list
+        self.tab.delete_color_button.click()
+        self.assertEqual(self.tab.matrix.rowCount(), rows_before)
+        self.prompts.delete_choice, self.prompts.delete_confirm = green, False
+        self.tab.delete_color_button.click()                                 # declined
+        self.assertEqual(self.prompts.delete_confirms[-1], ("Verde", 3, 0))
+        self.assertEqual(self.tab.matrix.rowCount(), rows_before)
+        self.prompts.delete_confirm = True
+        self.tab.delete_color_button.click()
+        self.assertLess(self.tab.matrix.rowCount(), rows_before)
+        self.assertNotIn("Verde", [c.name for c in self.service.snapshot().colors])
+
+    def test_delete_color_signal_with_an_id_skips_the_list(self):
+        green = self.service.add_color("Verde").id
+        self.controller.refresh()
+        self.tab.delete_color_requested.emit(green)
+        self.assertEqual(self.prompts.delete_confirms, [("Verde", 0, 0)])
+        self.assertNotIn("Verde", [c.name for c in self.service.snapshot().colors])
 
     def test_bulk_add_through_the_controller(self):
         self.prompts.bulk_answer = (3, self.colors["Bege"], None)

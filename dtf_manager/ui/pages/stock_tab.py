@@ -149,6 +149,7 @@ class StockMatrix(QTableWidget):
 class StockTab(QWidget):
     new_color_requested = Signal()
     new_size_requested = Signal()
+    delete_color_requested = Signal(int)             # color id, or -1 = ask which one
     bulk_requested = Signal()
     aliases_requested = Signal()
     history_requested = Signal()
@@ -210,12 +211,16 @@ class StockTab(QWidget):
         for attribute, text, signal in (
             ("new_color_button", "Nova cor", self.new_color_requested),
             ("new_size_button", "Novo tamanho", self.new_size_requested),
+            ("delete_color_button", "Excluir cor", None),
             ("bulk_button", "Adicionar estoque em massa", self.bulk_requested),
             ("aliases_button", "Equivalências", self.aliases_requested),
             ("history_button", "Histórico", self.history_requested),
         ):
             button = QPushButton(text)
-            button.clicked.connect(signal)
+            if signal is None:
+                button.clicked.connect(lambda: self.delete_color_requested.emit(-1))
+            else:
+                button.clicked.connect(signal)
             setattr(self, attribute, button)
             buttons.addWidget(button)
         self.quick_button = QPushButton("Contagem rápida")
