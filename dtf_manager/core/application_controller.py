@@ -146,7 +146,6 @@ class ApplicationController(QObject):
             self._login_window.refresh_retry_requested.connect(self.refresh_session)
             self._login_window.new_login_requested.connect(self.show_new_login)
             self._login_window.register_requested.connect(self.show_register)
-            self._login_window.activate_requested.connect(self.show_activation)
             self._login_window.closed.connect(self._login_closed)
         return self._login_window
 
