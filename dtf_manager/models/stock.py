@@ -101,6 +101,7 @@ class ValidationLine:
     needs_size: bool
     color_hint: str       # unrecognized/ambiguous text found in the Variação, if any
     reason: str
+    image_url: str = ""   # product image link from the spreadsheet, if any
 
 
 @dataclass(frozen=True, slots=True)

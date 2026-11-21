@@ -1,7 +1,9 @@
 """Dialogs of the stock tabs and `StockPrompts`, the object the StockController talks to.
 
 Tests replace StockPrompts with a fake, so no dialog ever blocks a test."""
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QPixmap
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QMessageBox, QPushButton, QSpinBox, QTableWidget,
@@ -163,10 +165,29 @@ class ImportNoticeDialog(QDialog):
         self.accept() if action != "cancel" else self.reject()
 
 
+class _NetworkFetcher:
+    """Downloads a product image without blocking the window."""
+
+    def __init__(self, parent):
+        self._manager = QNetworkAccessManager(parent)
+
+    def fetch(self, url: str, done) -> None:
+        reply = self._manager.get(QNetworkRequest(QUrl(url)))
+
+        def finished():
+            data = bytes(reply.readAll()) if reply.error() == reply.NetworkError.NoError else None
+            reply.deleteLater()
+            done(data)
+
+        reply.finished.connect(finished)
+
+
 class ValidationDialog(QDialog):
     """Items without a recognizable color/size, grouped by SKU, before the futuro is computed."""
 
-    def __init__(self, lines, colors, sizes, parent=None):
+    IMAGE_SIZE = 56
+
+    def __init__(self, lines, colors, sizes, parent=None, image_fetcher=None):
         super().__init__(parent)
         self.setObjectName("stockValidationDialog")
         self.setWindowTitle("Validar itens da planilha")
@@ -174,23 +195,36 @@ class ValidationDialog(QDialog):
         self.lines = list(lines)
         self._colors, self._sizes = list(colors), list(sizes)
         layout = QVBoxLayout(self)
-        intro = QLabel("Alguns itens não tiveram a cor (ou o tamanho) identificada. Escolha "
-                       "abaixo; o que ficar pendente fica fora da conta do futuro.")
+        intro = QLabel("Alguns itens não tiveram a cor identificada. Escolha a cor abaixo; "
+                       "o que ficar pendente fica fora da conta do futuro.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
-        headers = ("ANÚNCIO", "SKU", "VARIAÇÃO", "TAM.", "CAMISETAS", "COR", "TAMANHO 1",
+        headers = ("IMAGEM", "ANÚNCIO", "SKU", "VARIAÇÃO", "CAMISETAS", "COR", "TAMANHO 1",
                    "TAMANHO 2 (KIT)", "LEMBRAR SKU", "")
         self.table = QTableWidget(len(self.lines), len(headers))
         self.table.setObjectName("validationTable")
         self.table.setHorizontalHeaderLabels(headers)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().hide()
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, self.IMAGE_SIZE + 16)
+        header.setSectionResizeMode(9, QHeaderView.ResizeMode.ResizeToContents)
+        self._fetch = image_fetcher or _NetworkFetcher(self).fetch
+        self._pictures = {}
+        self.image_labels = []
         self.color_boxes, self.size_boxes, self.remember_boxes, self.apply_buttons = [], [], [], []
         for row, line in enumerate(self.lines):
+            picture = QLabel("sem imagem")
+            picture.setObjectName("productImagePlaceholder")
+            picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            picture.setFixedSize(self.IMAGE_SIZE, self.IMAGE_SIZE)
+            self.image_labels.append(picture)
+            self.table.setCellWidget(row, 0, picture)
+            self._load_picture(row, line.image_url)
             for column, text in enumerate((line.product_name, line.sku or "(sem SKU)",
-                                           line.variation or "—", line.sizes_text or "—",
-                                           line.shirts)):
+                                           line.variation or "—", line.shirts), start=1):
                 self.table.setItem(row, column, _item(text))
             color = self._combo(self._color_items(), enabled=line.needs_color)
             color.activated.connect(lambda _i, r=row: self._color_chosen(r))
@@ -216,11 +250,16 @@ class ValidationDialog(QDialog):
             holder_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             holder_layout.addWidget(remember)
             self.table.setCellWidget(row, 8, holder)
-            apply_button = QPushButton("Aplicar a todos os iguais")
+            apply_button = QPushButton("Aplicar aos iguais")
+            apply_button.setToolTip("Usa esta cor em todas as linhas do mesmo SKU.")
             apply_button.clicked.connect(lambda _c=False, r=row: self.apply_to_equals(r))
             self.apply_buttons.append(apply_button)
             self.table.setCellWidget(row, 9, apply_button)
-            self.table.setRowHeight(row, 40)
+            self.table.setRowHeight(row, self.IMAGE_SIZE + 10)
+        # sizes are only asked for when a line has no readable size
+        needs_size = any(line.needs_size for line in self.lines)
+        self.table.setColumnHidden(6, not needs_size)
+        self.table.setColumnHidden(7, not needs_size)
         layout.addWidget(self.table, 1)
         self.status = QLabel()
         self.status.setObjectName("muted")
@@ -238,6 +277,30 @@ class ValidationDialog(QDialog):
             buttons.addWidget(button)
         layout.addLayout(buttons)
         self._update_buttons()
+
+    # ---- product image -------------------------------------------------------------
+    def _load_picture(self, row: int, url: str) -> None:
+        if not url or not url.lower().startswith(("http://", "https://")):
+            return
+        if url in self._pictures:
+            self._show_picture(row, self._pictures[url])
+            return
+        self._fetch(url, lambda data, r=row, u=url: self._picture_ready(r, u, data))
+
+    def _picture_ready(self, row: int, url: str, data) -> None:
+        pixmap = QPixmap()
+        if data and pixmap.loadFromData(data):
+            self._pictures[url] = pixmap
+            self._show_picture(row, pixmap)
+
+    def _show_picture(self, row: int, pixmap) -> None:
+        try:
+            label = self.image_labels[row]
+            label.setPixmap(pixmap.scaled(
+                self.IMAGE_SIZE, self.IMAGE_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation))
+        except RuntimeError:        # the dialog was closed before the image arrived
+            pass
 
     # ---- combos ------------------------------------------------------------------
     def _combo(self, items, enabled: bool) -> QComboBox:

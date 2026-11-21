@@ -297,7 +297,9 @@ class StockService:
             key=key, product_name=first.item.product_name, sku=first.item.sku,
             variation=" | ".join(variations), sizes_text=" | ".join(sizes), shirts=shirts,
             needs_color=needs_color, needs_size=needs_size,
-            color_hint=first.color_hint, reason=reason)
+            color_hint=first.color_hint, reason=reason,
+            image_url=next((e.item.product_image_url for e in entries
+                            if e.item.product_image_url), "") or "")
 
     def commit_import(self, prep: Preparation, decisions: dict, file_name: str,
                       file_hash: str) -> ImportResult:

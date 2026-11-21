@@ -23,7 +23,7 @@ from dtf_manager.ui.widgets.stock_dialogs import (
     ValidationDialog,
 )
 from tests.stock_fakes import (
-    future_of, ids, make_order, make_service, stock_of,
+    future_of, ids, make_item, make_order, make_service, stock_of,
 )
 
 _counter = [0]
@@ -668,6 +668,50 @@ class DialogTests(ControllerBase):
         dialog.add_color_choice("Azul", 0)
         self.assertEqual(dialog.color_boxes[0].currentData(), "Azul")
         self.assertIn("Azul", [dialog.color_boxes[1].itemData(i) for i in range(dialog.color_boxes[1].count())])
+
+    def png_bytes(self):
+        from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+        from PySide6.QtGui import QColor, QImage
+        image = QImage(20, 20, QImage.Format.Format_RGB32)
+        image.fill(QColor("#cc3344"))
+        data = QByteArray()
+        buffer = QBuffer(data)
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        image.save(buffer, "PNG")
+        return bytes(data)
+
+    def test_validation_dialog_shows_the_spreadsheet_image_and_no_size_column(self):
+        from dataclasses import replace
+        items = [replace(make_item("A", "P - M", 2, "S-1"), product_image_url="https://img/x.png"),
+                 replace(make_item("B", "G", 1, "S-2"), product_image_url="https://img/x.png"),
+                 make_item("C", "GG", 1, "S-3")]                          # no image link at all
+        prep = self.service.prepare_import([make_order("A", items[0]), make_order("B", items[1]),
+                                            make_order("C", items[2])])
+        self.assertEqual(sorted(line.image_url for line in prep.lines),
+                         ["", "https://img/x.png", "https://img/x.png"])
+        requests, png = [], self.png_bytes()
+        snap = self.service.snapshot()
+        dialog = ValidationDialog(prep.lines, snap.colors, snap.sizes,
+                                  image_fetcher=lambda url, done: (requests.append(url), done(png)))
+        headers = [dialog.table.horizontalHeaderItem(c).text() for c in range(dialog.table.columnCount())]
+        self.assertEqual(headers[0], "IMAGEM")
+        self.assertNotIn("TAM.", headers)
+        self.assertTrue(dialog.table.isColumnHidden(6) and dialog.table.isColumnHidden(7))
+        self.assertEqual(requests, ["https://img/x.png"])               # the second row reuses it
+        shown = [bool(label.pixmap() and not label.pixmap().isNull()) for label in dialog.image_labels]
+        self.assertEqual(sorted(shown), [False, True, True])
+        self.assertEqual(dialog.image_labels[[ln.image_url for ln in dialog.lines].index("")].text(),
+                         "sem imagem")
+
+    def test_validation_dialog_failed_image_keeps_the_placeholder_and_sizes_show_when_needed(self):
+        from dataclasses import replace
+        item = replace(make_item("A", "Preta", 1, "S-1"), product_image_url="https://img/bad.png")
+        prep = self.service.prepare_import([make_order("A", item)])
+        snap = self.service.snapshot()
+        dialog = ValidationDialog(prep.lines, snap.colors, snap.sizes,
+                                  image_fetcher=lambda url, done: done(None))
+        self.assertEqual(dialog.image_labels[0].text(), "sem imagem")
+        self.assertFalse(dialog.table.isColumnHidden(6))               # this line needs a size
 
     def test_validation_dialog_size_and_no_sku_cannot_be_remembered(self):
         prep = self.service.prepare_import([make_order("A", ("Preta", 1, ""))])
