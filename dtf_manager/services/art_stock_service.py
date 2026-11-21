@@ -77,7 +77,7 @@ class ArtStockService:
         rows.sort(key=lambda r: r.relative_path.casefold())
         by_id = {r.art_id: r for r in rows}
         separation = tuple(
-            ArtSeparationRow(art_id, by_id[art_id].name, by_id[art_id].absolute_path, quantity,
+            ArtSeparationRow(art_id, by_id[art_id].relative_path, by_id[art_id].absolute_path, quantity,
                              by_id[art_id].stock, separated)
             for art_id, (quantity, separated) in sorted(
                 future.items(), key=lambda kv: by_id[kv[0]].relative_path.casefold())

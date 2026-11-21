@@ -130,6 +130,9 @@ QLabel#pendingWarning, QLabel#importWarning { color: #e69b45; font-weight: 700; 
 QTabBar::tab { background: #100b0d; color: #a79b9e; padding: 7px 16px; border: 1px solid #351018; }
 QTabBar::tab:selected { color: #ffffff; background: #2c0d15; }
 QTableWidget#stockTable { background: #030304; border: 0; }
+QTableWidget#artStockTable, QTableWidget#artSeparationTable, QTableWidget#finalizeArtTable, QTableWidget#artMatchesTable { background: #070708; alternate-background-color: #0b090a; border: 1px solid #351018; border-radius: 8px; outline: 0; }
+QTableWidget#artStockTable::item, QTableWidget#artSeparationTable::item { font-size: 14px; }
+QTableWidget#artStockTable QLineEdit { background: #1a0e13; color: #ffffff; border: 2px solid #ef3e61; font-size: 15px; font-weight: 700; padding: 0 4px; }
 QFrame#summaryCard { background: #0b090a; border: 1px solid #3d141c; border-radius: 10px; }
 QLabel#summaryTitle { color: #a79b9e; font-size: 11px; font-weight: 700; letter-spacing: 1px; }
 QLabel#summaryValue { color: #f7f2f3; font-size: 26px; font-weight: 700; }

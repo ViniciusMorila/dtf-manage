@@ -50,6 +50,11 @@ from dtf_manager.core.stock_controller import StockController
 from dtf_manager.services.stock_repository import StockRepository
 from dtf_manager.services.stock_service import StockService
 from dtf_manager.ui.pages.stock_tab import StockTab
+from dtf_manager.core.art_stock_controller import ArtStockController
+from dtf_manager.services.art_stock_repository import ArtStockRepository
+from dtf_manager.services.art_stock_service import ArtStockService
+from dtf_manager.services.thumbnail_cache import IdenticalFilesScanner, ThumbnailCache
+from dtf_manager.ui.pages.art_stock_tab import ArtStockTab
 from dtf_manager.ui.widgets.stock_dialogs import StockPrompts
 
 
@@ -216,11 +221,20 @@ class MainWindow(QMainWindow):
             self.stock_tab, mounted_lookup=self.processed_order_repository.known_orders,
             parent=self)
         self.main_tabs.addTab(self.stock_tab, "Estoque de camisetas")
-        prints = QLabel("Em breve")
-        prints.setObjectName("emptyState")
-        prints.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.prints_tab = prints
-        self.main_tabs.addTab(prints, "Estoque de estampas")
+        self.prints_tab = ArtStockTab()
+        self.thumbnails = ThumbnailCache(parent=self)
+        self.prints_tab.set_thumbnails(self.thumbnails)
+        self.art_controller = ArtStockController(
+            ArtStockService(ArtStockRepository(self.database), self.stock_controller.service.repository),
+            self.stock_controller.prompts, self.prints_tab,
+            orders_provider=lambda: self.order_import_state.imported_orders,
+            folder_provider=lambda: getattr(getattr(self, "settings", None), "folder_path", None),
+            scanner=IdenticalFilesScanner(self), thumbs=self.thumbnails, parent=self)
+        self.stock_controller.arts = self.art_controller
+        self.prints_tab.history_requested.connect(self.stock_controller.show_history)
+        self.prints_tab.manual_link_requested.connect(self._open_manual_links_from_stock)
+        self.main_tabs.addTab(self.prints_tab, "Estoque de estampas")
+        self.main_tabs.currentChanged.connect(self._tab_changed)
         self.setCentralWidget(self.main_tabs)
 
     def _build_ui(self):
@@ -248,6 +262,11 @@ class MainWindow(QMainWindow):
         settings.import_orders_requested.connect(self._import_orders)
         settings.finalize_requested.connect(self.stock_controller.finalize)
         self.stock_controller.changed.connect(settings.set_finalize_enabled)
+        self.art_controller.changed.connect(
+            lambda: settings.set_finalize_enabled(self.stock_controller.has_future))
+        settings.folder_selected.connect(self.art_controller.set_folder)
+        self.art_controller.set_folder(settings.folder_path)
+        self.order_import_state.changed.connect(self.art_controller.schedule_recalc)
         settings.set_finalize_enabled(self.stock_controller.has_future)
         settings.link_memory_requested.connect(self._open_link_memory)
         settings.continue_operation_requested.connect(self._continue_active_operation)
@@ -414,6 +433,16 @@ class MainWindow(QMainWindow):
         decision, self._pending_stock_import = self._pending_stock_import, None
         if decision is not None:
             self.stock_controller.apply_import(decision)
+
+    def _tab_changed(self, index: int) -> None:
+        """Opening the art-stock tab re-reads the art folder (new or renamed files)."""
+        if self.main_tabs.widget(index) is self.prints_tab:
+            self.art_controller.refresh_folder()
+
+    def _open_manual_links_from_stock(self) -> None:
+        """Shortcut of the art-stock notice: back to the DTF tab, in the manual linking queue."""
+        self.main_tabs.setCurrentIndex(0)
+        self._open_manual_queue()
 
     def _end_active_operation(self) -> None:
         """Forgets the active operation and the orders loaded for it (project back to empty)."""

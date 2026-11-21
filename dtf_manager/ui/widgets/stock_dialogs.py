@@ -396,7 +396,8 @@ class FinalizeDialog(QDialog):
         self.setWindowTitle("Finalizar pedido")
         self.resize(640, 480)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Isto desconta do estoque as camisetas do futuro e zera o futuro:"))
+        layout.addWidget(QLabel(
+            "Isto desconta do estoque as camisetas e as estampas do futuro e zera o futuro:"))
         table = _read_only_table("finalizeTable",
                                  ("COR", "TAM.", "FUTURO", "ESTOQUE", "DEPOIS", "FALTAM"))
         table.setRowCount(len(summary.rows))
@@ -405,7 +406,25 @@ class FinalizeDialog(QDialog):
                                             entry.after, entry.shortage)):
                 table.setItem(row, column, _item(value))
         layout.addWidget(table, 1)
+        self.art_table = None
+        if summary.arts:
+            layout.addWidget(QLabel("Estampas:"))
+            self.art_table = _read_only_table(
+                "finalizeArtTable", ("ARQUIVO", "FUTURO", "ESTOQUE", "DEPOIS", "FALTAM"))
+            self.art_table.setRowCount(len(summary.arts))
+            for row, entry in enumerate(summary.arts):
+                for column, value in enumerate((entry.name, entry.future, entry.stock,
+                                                entry.after, entry.shortage)):
+                    self.art_table.setItem(row, column, _item(value))
+            layout.addWidget(self.art_table, 1)
         self.acknowledge = None
+        if summary.art_shortages:
+            names = ", ".join(f"{r.name} (faltam {r.shortage})" for r in summary.art_shortages)
+            label = QLabel(f"Estampas com estoque insuficiente: {names}. O estoque ficará em 0 "
+                           "nesses itens e a falta será registrada no histórico.")
+            label.setObjectName("pendingWarning")
+            label.setWordWrap(True)
+            layout.addWidget(label)
         if summary.shortages:
             names = ", ".join(f"{r.color} {r.size} (faltam {r.shortage})"
                               for r in summary.shortages)
@@ -459,7 +478,8 @@ class StockHistoryDialog(QDialog):
         self.filter.currentIndexChanged.connect(self._fill_movements)
         page_layout.addWidget(self.filter)
         self.movements_table = _read_only_table(
-            "movementsTable", ("DATA", "TIPO", "COR", "TAM.", "QTD.", "ANTES", "DEPOIS", "OBS."))
+            "movementsTable", ("DATA", "PRODUTO", "TIPO", "COR / ARQUIVO", "TAM.", "QTD.", "ANTES",
+                               "DEPOIS", "OBS."))
         page_layout.addWidget(self.movements_table)
         tabs.addTab(page, "Movimentos")
         self.imports_table = _read_only_table(
@@ -486,9 +506,110 @@ class StockHistoryDialog(QDialog):
             kind_text = MOVEMENT_LABELS.get(move.kind, move.kind)
             if move.scope == "futuro":
                 kind_text += " (futuro)"
-            for column, value in enumerate((date_time(move.at), kind_text, move.color, move.size,
-                                            quantity, move.before, move.after, move.note)):
+            product = "Estampa" if move.produto == "estampa" else "Camiseta"
+            for column, value in enumerate((date_time(move.at), product, kind_text, move.color,
+                                            move.size, quantity, move.before, move.after,
+                                            move.note)):
                 table.setItem(row, column, _item(value))
+
+
+class MoveArtDialog(QDialog):
+    """Pick the file that holds the stock and the file that should receive it."""
+
+    def __init__(self, sources, targets_for, parent=None):
+        super().__init__(parent)
+        self.setObjectName("moveArtDialog")
+        self.setWindowTitle("Mover estoque para outro arquivo")
+        self.resize(560, 220)
+        self._targets_for = targets_for
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Todo o estoque do arquivo de origem passa para o de destino "
+                                "(renomeações e trocas de pasta):"))
+        layout.addWidget(QLabel("De (arquivos com estoque):"))
+        self.source = QComboBox()
+        for file in sources:
+            self.source.addItem(file.relative_path + ("  (não encontrado)" if file.missing else ""),
+                                file.id)
+        layout.addWidget(self.source)
+        layout.addWidget(QLabel("Para (arquivos da pasta):"))
+        self.target = QComboBox()
+        layout.addWidget(self.target)
+        self.source.currentIndexChanged.connect(self._fill_targets)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        cancel = QPushButton("Cancelar")
+        cancel.clicked.connect(self.reject)
+        self.confirm_button = QPushButton("Mover estoque")
+        self.confirm_button.setObjectName("primaryButton")
+        self.confirm_button.clicked.connect(self._confirm)
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.confirm_button)
+        layout.addLayout(buttons)
+        self._fill_targets()
+
+    def _fill_targets(self) -> None:
+        self.target.clear()
+        source_id = self.source.currentData()
+        for file in self._targets_for(source_id):
+            self.target.addItem(file.relative_path, file.id)
+        self.confirm_button.setEnabled(self.target.count() > 0)
+
+    def choice(self):
+        return self.source.currentData(), self.target.currentData()
+
+    def _confirm(self) -> None:
+        answer = QMessageBox.question(
+            self, "Confirmar",
+            f"Mover o estoque de [{self.source.currentText()}] para "
+            f"[{self.target.currentText()}]?")
+        if answer == QMessageBox.StandardButton.Yes:
+            self.accept()
+
+
+class MatchesDialog(QDialog):
+    """Suggested pairs (vanished file -> same name in the folder). Nothing moves until the user
+    confirms: one by one (tick the rows) or all of them."""
+
+    def __init__(self, suggestions, parent=None):
+        super().__init__(parent)
+        self.setObjectName("artMatchesDialog")
+        self.setWindowTitle("Sugerir correspondências")
+        self.resize(760, 420)
+        self.suggestions = list(suggestions)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Arquivos que sumiram da pasta e têm estoque, e o arquivo de mesmo "
+                                "nome que existe agora. Marque o que deve ser movido:"))
+        self.table = _read_only_table("artMatchesTable", ("MOVER", "DE (SUMIU)", "PARA", "ESTOQUE"))
+        self.table.setRowCount(len(self.suggestions))
+        for row, match in enumerate(self.suggestions):
+            check = QTableWidgetItem()
+            check.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            check.setCheckState(Qt.CheckState.Unchecked)
+            self.table.setItem(row, 0, check)
+            for column, value in enumerate((match.from_path, match.to_path, match.stock), start=1):
+                self.table.setItem(row, column, _item(value))
+        layout.addWidget(self.table, 1)
+        buttons = QHBoxLayout()
+        self.all_button = QPushButton("Marcar todos")
+        self.all_button.clicked.connect(self.mark_all)
+        buttons.addWidget(self.all_button)
+        buttons.addStretch()
+        cancel = QPushButton("Cancelar")
+        cancel.clicked.connect(self.reject)
+        self.confirm_button = QPushButton("Mover marcados")
+        self.confirm_button.setObjectName("primaryButton")
+        self.confirm_button.clicked.connect(self.accept)
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.confirm_button)
+        layout.addLayout(buttons)
+
+    def mark_all(self) -> None:
+        for row in range(self.table.rowCount()):
+            self.table.item(row, 0).setCheckState(Qt.CheckState.Checked)
+
+    def chosen(self):
+        return [match for row, match in enumerate(self.suggestions)
+                if self.table.item(row, 0).checkState() == Qt.CheckState.Checked]
 
 
 class StockPrompts:
@@ -540,6 +661,18 @@ class StockPrompts:
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         return dialog.decisions()
+
+    def choose_art_move(self, sources, targets_for):
+        dialog = MoveArtDialog(sources, targets_for, self.parent)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialog.choice()
+
+    def confirm_art_matches(self, suggestions):
+        dialog = MatchesDialog(suggestions, self.parent)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return []
+        return dialog.chosen()
 
     def confirm_finalize(self, summary) -> bool:
         return FinalizeDialog(summary, self.parent).exec() == QDialog.DialogCode.Accepted

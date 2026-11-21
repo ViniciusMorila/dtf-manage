@@ -16,6 +16,7 @@ from dtf_manager.models.stock import LineDecision, NoticeChoice
 from dtf_manager.services.production_history_repository import ProductionHistoryRepository
 from dtf_manager.services.sqlite_database import DTFDatabase
 from dtf_manager.ui.main_window import MainWindow
+from dtf_manager.ui.pages.art_stock_tab import ArtStockTab
 from dtf_manager.ui.pages.stock_tab import NEGATIVE, StockTab
 from dtf_manager.ui.styles import APP_STYLE
 from dtf_manager.ui.widgets.stock_dialogs import (
@@ -763,13 +764,13 @@ class DialogTests(ControllerBase):
         self.run_import(self.orders(n=2))
         self.controller.finalize()
         dialog = StockHistoryDialog(self.service.movements(), self.service.imports())
-        kinds = {dialog.movements_table.item(r, 1).text()
+        kinds = {dialog.movements_table.item(r, 2).text()
                  for r in range(dialog.movements_table.rowCount())}
         self.assertIn("Importação (futuro)", kinds)
         self.assertIn("Finalização", kinds)
         index = dialog.filter.findData("finalizacao")
         dialog.filter.setCurrentIndex(index)
-        self.assertEqual({dialog.movements_table.item(r, 1).text()
+        self.assertEqual({dialog.movements_table.item(r, 2).text()
                           for r in range(dialog.movements_table.rowCount())}, {"Finalização"})
         self.assertEqual(dialog.imports_table.rowCount(), 1)
         self.assertTrue(dialog.imports_table.item(0, 3).text().startswith("Sim"))
@@ -818,7 +819,8 @@ class MainWindowStockTests(unittest.TestCase):
         self.assertIs(tabs.widget(0), self.window.pages)
         self.assertGreaterEqual(self.window.pages.count(), 6)        # all DTF pages intact
         self.assertNotEqual(self.window.pages.indexOf(self.window.editor_page), -1)
-        self.assertEqual(self.window.prints_tab.text(), "Em breve")
+        self.assertIsInstance(self.window.prints_tab, ArtStockTab)       # no longer "Em breve"
+        self.assertIs(tabs.widget(2), self.window.prints_tab)
         self.assertIs(tabs.widget(1), self.window.stock_tab)
 
     def test_finalize_button_sits_below_export_and_follows_the_future(self):

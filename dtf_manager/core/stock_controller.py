@@ -29,6 +29,7 @@ class StockController(QObject):
         self.tab = tab
         self._mounted_lookup = mounted_lookup or (lambda numbers: set())
         self._busy = False
+        self.arts = None                 # ArtStockController, set by the window when it exists
         if tab is not None:
             tab.new_color_requested.connect(self.new_color)
             tab.new_size_requested.connect(self.new_size)
@@ -41,14 +42,23 @@ class StockController(QObject):
 
     # ---- view -----------------------------------------------------------------------
     @property
+    def art_service(self):
+        return self.arts.service if self.arts is not None else None
+
+    @property
     def has_future(self) -> bool:
-        return self.service.snapshot().has_future
+        """A futuro to finalize: shirts or arts."""
+        return self.service.snapshot().has_future or (
+            self.arts is not None and self.arts.has_future)
 
     def refresh(self) -> None:
         snapshot = self.service.snapshot()
         if self.tab is not None:
             self.tab.render(snapshot)
-        self.changed.emit(snapshot.has_future)
+        if self.arts is not None:
+            self.arts.refresh()
+        self.changed.emit(snapshot.has_future or (
+            self.arts is not None and self.arts.has_future))
 
     def _try(self, action, *args):
         """Runs a service call; the message of a StockError is shown to the user."""
@@ -166,6 +176,8 @@ class StockController(QObject):
             if decisions is None:
                 return False
         result = self.service.commit_import(prep, decisions, file_name, file_hash)
+        if self.arts is not None:
+            self.arts.recalculate(reset_marks=True)      # a new import replaces the arts futuro
         self.refresh()
         notes = []
         if result.pending:
@@ -180,7 +192,7 @@ class StockController(QObject):
 
     def cancel_import(self) -> bool:
         """The operation was cancelled: forget its futuro and its import record."""
-        done = self.service.cancel_current_import()
+        done = self.service.cancel_current_import(self.art_service)
         self.refresh()
         return done
 
@@ -197,12 +209,12 @@ class StockController(QObject):
         self.changed.emit(False)                 # disables the button during the operation
         done = False
         try:
-            summary = self.service.finalize_summary()
+            summary = self.service.finalize_summary(self.art_service)
             if summary is None:
                 return False
             if not self.prompts.confirm_finalize(summary):
                 return False
-            done = self.service.finalize() is not None
+            done = self.service.finalize(self.art_service) is not None
             return done
         finally:
             self._busy = False
