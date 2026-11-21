@@ -33,6 +33,7 @@ class ArtStockController(QObject):
         self._recalc_scheduled = False
         self._manual: dict[str, int] = {}     # arts added by hand on the roll: path -> copies
         self._had_manual = False
+        self._applied: dict[str, int] = {}    # hand-added copies already inside the stored futuro
         self.identical_groups: list[list[str]] = []
         if scanner is not None:
             scanner.found.connect(self._identical_found)
@@ -98,18 +99,44 @@ class ArtStockController(QObject):
         Skipped while no order is loaded (cancel/finalize clear the futuro on their own)."""
         loaded = list(self._orders())
         counted = json.loads(self.service.stock_repository.get_state("counted_orders", "[]") or "[]")
-        if not loaded:
-            if counted:
-                return False    # an operation is still pending: its futuro is not ours to rewrite
-            if not self._manual and not self._had_manual:
+        if not loaded and counted:
+            # An operation is pending but its orders are not loaded (app reopened, "Continuar" not
+            # pressed yet): keep its futuro as it is and only add/remove the hand-added copies.
+            if not self._manual and not self._applied:
                 return False
-        elif counted and not ({o.platform_order_number for o in loaded} & set(counted)):
-            return False        # the loaded orders are not the ones the stock import counted
-        count = self._with_manual(count_art_copies(self.counted_orders()))
+            count = self._with_manual(self._pending_count())
+        else:
+            if not loaded and not self._manual and not self._had_manual:
+                return False
+            if loaded and counted and not ({o.platform_order_number for o in loaded} & set(counted)):
+                return False    # the loaded orders are not the ones the stock import counted
+            count = self._with_manual(count_art_copies(self.counted_orders()))
+        self._applied = dict(self._manual)
         self._had_manual = bool(self._manual)
         self.service.replace_future(count, reset_marks=reset_marks)
         self.refresh()
         return True
+
+    def _pending_count(self) -> ArtCopyCount:
+        """The futuro now stored, minus the hand-added copies already inside it."""
+        repo = self.service.repository
+        files = {f.id: f for f in repo.files()}
+        arts: dict[str, CountedArt] = {}
+        for art_id, (quantity, _) in repo.future().items():
+            file = files.get(art_id)
+            if file is not None and quantity > 0:
+                arts[str(Path(file.absolute_path).resolve()).casefold()] = CountedArt(
+                    file.name, file.absolute_path, quantity)
+        for path, copies in self._applied.items():
+            key = str(Path(path).resolve()).casefold()
+            if key in arts:
+                left = arts[key].copies - copies
+                if left > 0:
+                    arts[key] = CountedArt(arts[key].file_name, arts[key].file_reference, left)
+                else:
+                    del arts[key]
+        unlinked = int(self.service.stock_repository.get_state("art_unlinked", "0") or 0)
+        return ArtCopyCount(arts, unlinked, 0)
 
     def _with_manual(self, count: ArtCopyCount) -> ArtCopyCount:
         """Adds the copies of the arts the user put on the roll by hand."""
@@ -136,6 +163,7 @@ class ArtStockController(QObject):
     def clear_manual(self) -> None:
         """Finalize/cancel already settled the futuro, hand-added copies included."""
         self._manual = {}
+        self._applied = {}
         self._had_manual = False
         self.manual_consumed.emit()
 

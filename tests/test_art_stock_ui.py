@@ -712,6 +712,34 @@ class MainWindowArtTests(unittest.TestCase):
         self.assertEqual(row_of(arts.service, "b.png").future, 0)
         self._clean_roll()
 
+    def test_hand_added_arts_count_even_when_a_pending_operation_has_not_been_continued(self):
+        import json
+        window = self.window
+        window.settings.folder_selected.emit(self.art_folder)
+        self._clean_roll()
+        arts, panel = window.art_controller, window.artwork_panel
+        repo = window.stock_controller.service.repository
+        arts.service.replace_future(count_art_copies(
+            [make_order("P1", linked_item("P1", self.a, 3))]))                   # futuro of the operation
+        repo.set_state("counted_orders", json.dumps(["P1"]))                       # pending, orders not loaded
+        panel.add_configured_artwork(self.b, 5, 5, 2, manual=True)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertEqual(row_of(arts.service, "a.png").future, 3)                 # untouched
+        self.assertEqual(row_of(arts.service, "b.png").future, 2)                 # the hand-added ones
+        panel.add_configured_artwork(self.a, 5, 5, 4, manual=True)
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertEqual(row_of(arts.service, "a.png").future, 7)
+        panel._remove_card(panel._artwork_cards[0])
+        panel._remove_card(panel._artwork_cards[0])
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertEqual(row_of(arts.service, "a.png").future, 3)
+        self.assertEqual(row_of(arts.service, "b.png").future, 0)
+        repo.set_state("counted_orders", "[]")
+        self._clean_roll()
+
     def test_roll_cards_built_from_orders_are_not_counted_twice(self):
         window = self.window
         window.settings.folder_selected.emit(self.art_folder)
