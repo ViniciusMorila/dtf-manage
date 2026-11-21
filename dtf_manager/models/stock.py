@@ -37,6 +37,7 @@ class Movement:
     before: int
     after: int
     note: str
+    produto: str = "camiseta"     # "camiseta" or "estampa" (color holds the file then)
 
 
 @dataclass(frozen=True, slots=True)

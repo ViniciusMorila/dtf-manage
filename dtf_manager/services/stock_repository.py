@@ -163,17 +163,18 @@ class StockRepository:
 
     # ---- history ---------------------------------------------------------------------
     def add_movement(self, kind, scope, color, size, before, after, note="", db=None,
-                     at: str | None = None) -> None:
+                     at: str | None = None, produto: str = "camiseta") -> None:
         with self.tx(db) as c:
             c.execute(
-                "INSERT INTO stock_movements(at,kind,scope,color,size,quantity,before,after,note)"
-                " VALUES(?,?,?,?,?,?,?,?,?)",
-                (at or now_text(), kind, scope, color, size, after - before, before, after, note))
+                "INSERT INTO stock_movements(at,kind,scope,color,size,quantity,before,after,note,"
+                "produto) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (at or now_text(), kind, scope, color, size, after - before, before, after, note,
+                 produto))
 
     def movements(self, limit: int = 1000, db=None) -> list[Movement]:
         with self.tx(db) as c:
             return [Movement(r["id"], r["at"], r["kind"], r["scope"], r["color"], r["size"],
-                             r["quantity"], r["before"], r["after"], r["note"])
+                             r["quantity"], r["before"], r["after"], r["note"], r["produto"])
                     for r in c.execute(
                         "SELECT * FROM stock_movements ORDER BY id DESC LIMIT ?", (limit,))]
 
