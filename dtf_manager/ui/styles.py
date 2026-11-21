@@ -31,6 +31,7 @@ QPushButton#exportButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y
 QPushButton#regroupButton { background: #100b0d; border: 1px solid #6b1a2b; color: #e9dfe1; padding: 8px 12px; }
 QPushButton#regroupButton:hover { background: #2c0d15; border-color: #b12645; color: #ffffff; }
 QPushButton#iconButton { padding: 6px; min-width: 20px; min-height: 20px; font-size: 14px; }
+QPushButton[pill="true"] { border-radius: 15px; padding: 6px 14px; min-height: 22px; }
 QPushButton#removeButton { padding: 6px; min-height: 20px; font-size: 14px; color: #d72d4e; }
 QPushButton#removeButton:hover { color: #ff5a75; border-color: #9c2039; }
 QPushButton#previewColorButton { background: #170b0f; border: 1px solid #a52340; border-radius: 17px; padding: 0; min-width: 32px; min-height: 32px; font-size: 18px; }

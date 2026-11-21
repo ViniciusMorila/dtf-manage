@@ -56,9 +56,6 @@ class ProductionReviewPage(QWidget):
         title.setObjectName("sectionTitle")
         header.addWidget(title)
         header.addStretch()
-        self.revalidate_button = QPushButton("REVALIDAR")
-        self.revalidate_button.clicked.connect(self.revalidate)
-        header.addWidget(self.revalidate_button)
         root.addLayout(header)
 
         metrics = QHBoxLayout()
@@ -144,7 +141,6 @@ class ProductionReviewPage(QWidget):
         root.addLayout(footer)
 
     def revalidate(self) -> None:
-        self.revalidate_button.setEnabled(False)
         self.status_label.setText("VALIDANDO ARTES...")
         self.repaint()
         try:
@@ -159,8 +155,6 @@ class ProductionReviewPage(QWidget):
                 id="validation-failure", severity="error", code="VALIDATION_FAILURE",
                 message="Não foi possível concluir a conferência do pedido.",
             ),))
-        finally:
-            self.revalidate_button.setEnabled(True)
         self._refresh()
 
     def _mark_stale(self) -> None:
