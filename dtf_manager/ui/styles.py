@@ -128,4 +128,13 @@ QTableWidget#stockTable::item, QTableWidget#futureTable::item, QTableWidget#bala
 QLabel#pendingWarning, QLabel#importWarning { color: #e69b45; font-weight: 700; }
 QTabBar::tab { background: #100b0d; color: #a79b9e; padding: 7px 16px; border: 1px solid #351018; }
 QTabBar::tab:selected { color: #ffffff; background: #2c0d15; }
+QFrame#summaryCard { background: #0b090a; border: 1px solid #3d141c; border-radius: 10px; }
+QLabel#summaryTitle { color: #a79b9e; font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+QLabel#summaryValue { color: #f7f2f3; font-size: 26px; font-weight: 700; }
+QLabel#summaryValue[tone="alert"] { color: #ff5a75; }
+QLabel#stockHint { color: #e4dadc; font-size: 13px; font-weight: 600; }
+QLabel#quickBanner { color: #ffffff; background: #4a1020; border: 1px solid #bd2949; border-radius: 6px; padding: 8px 12px; font-size: 13px; font-weight: 700; }
+QPushButton#quickCountButton { border-color: #8f2038; }
+QPushButton#quickCountButton:checked { background: #4a1020; border-color: #ef3e61; color: #ffffff; }
+QTableWidget#stockTable QLineEdit { background: #1a0e13; color: #ffffff; border: 2px solid #ef3e61; font-size: 15px; font-weight: 700; padding: 0 4px; }
 """
