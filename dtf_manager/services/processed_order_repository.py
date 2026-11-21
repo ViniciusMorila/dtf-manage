@@ -36,6 +36,19 @@ class ProcessedOrderRepository:
             row["order_number"], row["fingerprint"], row["processed_at"]
         )
 
+    def known_orders(self, numbers) -> set[str]:
+        """Which of these order numbers were already mounted in a roll (one query per chunk)."""
+        numbers = list(numbers)
+        found: set[str] = set()
+        with self.database.transaction() as db:
+            for start in range(0, len(numbers), 500):
+                chunk = numbers[start:start + 500]
+                marks = ",".join("?" * len(chunk))
+                found.update(row[0] for row in db.execute(
+                    f"SELECT order_number FROM processed_orders WHERE order_number IN ({marks})",
+                    chunk))
+        return found
+
     def record(self, orders, processed_at: str | None = None) -> None:
         timestamp = processed_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         with self.database.transaction() as db:

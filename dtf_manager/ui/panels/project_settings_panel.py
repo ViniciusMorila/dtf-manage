@@ -9,6 +9,7 @@ from dtf_manager.ui.widgets.dimension_spinbox import EditableDoubleSpinBox
 
 class ProjectSettingsPanel(QFrame):
     export_requested = Signal()
+    finalize_requested = Signal()
     folder_selected = Signal(Path)
     roll_settings_changed = Signal(float, float, float)
     regroup_requested = Signal()
@@ -206,6 +207,13 @@ class ProjectSettingsPanel(QFrame):
         self.export_status.setObjectName("muted")
         self.export_status.setWordWrap(True)
         layout.addWidget(self.export_status)
+        self.finalize_button = QPushButton("FINALIZAR PEDIDO")
+        self.finalize_button.setObjectName("finalizeButton")
+        self.finalize_button.setToolTip(
+            "Desconta do estoque de camisetas o que os pedidos importados consomem.")
+        self.finalize_button.setEnabled(False)
+        self.finalize_button.clicked.connect(self.finalize_requested)
+        layout.addWidget(self.finalize_button)
         scroll.setWidget(content)
         outer_layout.addWidget(scroll)
 
@@ -238,6 +246,10 @@ class ProjectSettingsPanel(QFrame):
     def gap_mm(self) -> float:
         gap_text = self.gap_combo.currentText().replace(",", ".").split()[0]
         return float(gap_text) * 10
+
+    def set_finalize_enabled(self, enabled: bool) -> None:
+        """Enabled only while there is a futuro to deduct and nothing is running."""
+        self.finalize_button.setEnabled(bool(enabled))
 
     def start_export(self) -> None:
         self.export_button.hide()

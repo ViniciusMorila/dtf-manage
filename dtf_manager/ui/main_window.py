@@ -9,7 +9,7 @@ if __package__ in (None, ""):
 
 from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QFont
-from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
 
 from dtf_manager.core.constants import APP_NAME
 from dtf_manager.ui.panels.artwork_panel import ArtworkPanel
@@ -46,6 +46,11 @@ from dtf_manager.services.active_operation_service import (
     build_import_operation_fingerprint, checkpoint_operation, create_active_operation,
 )
 from dtf_manager.ui.widgets.existing_operation_dialog import ExistingOperationDialog
+from dtf_manager.core.stock_controller import StockController
+from dtf_manager.services.stock_repository import StockRepository
+from dtf_manager.services.stock_service import StockService
+from dtf_manager.ui.pages.stock_tab import StockTab
+from dtf_manager.ui.widgets.stock_dialogs import StockPrompts
 
 
 def _days_text(days):
@@ -81,6 +86,7 @@ class MainWindow(QMainWindow):
         self._is_auto_linking = False
         self._is_building_order = False
         self._return_to_production_review = False
+        self._pending_stock_import = None
         with auth_timing.span("main_build_ui"):
             self._build_ui()
         self._authentication_logout = False
@@ -198,9 +204,28 @@ class MainWindow(QMainWindow):
             return False
         return True
 
+    def _build_main_tabs(self):
+        """DTF (the existing pages, unchanged) + the two stock tabs."""
+        self.main_tabs = QTabWidget()
+        self.main_tabs.setObjectName("mainTabs")
+        self.main_tabs.setDocumentMode(True)
+        self.main_tabs.addTab(self.pages, "DTF")
+        self.stock_tab = StockTab()
+        self.stock_controller = StockController(
+            StockService(StockRepository.default(self.database)), StockPrompts(self),
+            self.stock_tab, mounted_lookup=self.processed_order_repository.known_orders,
+            parent=self)
+        self.main_tabs.addTab(self.stock_tab, "Estoque de camisetas")
+        prints = QLabel("Em breve")
+        prints.setObjectName("emptyState")
+        prints.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.prints_tab = prints
+        self.main_tabs.addTab(prints, "Estoque de estampas")
+        self.setCentralWidget(self.main_tabs)
+
     def _build_ui(self):
         self.pages = QStackedWidget()
-        self.setCentralWidget(self.pages)
+        self._build_main_tabs()
         root = QWidget()
         root.setObjectName("appRoot")
         self.editor_page = root
@@ -221,6 +246,9 @@ class MainWindow(QMainWindow):
         settings.regroup_requested.connect(lambda: self.roll_view.regroup_artworks())
         settings.add_artwork_requested.connect(lambda: self._add_artwork(artwork, settings.folder_path))
         settings.import_orders_requested.connect(self._import_orders)
+        settings.finalize_requested.connect(self.stock_controller.finalize)
+        self.stock_controller.changed.connect(settings.set_finalize_enabled)
+        settings.set_finalize_enabled(self.stock_controller.has_future)
         settings.link_memory_requested.connect(self._open_link_memory)
         settings.continue_operation_requested.connect(self._continue_active_operation)
         main_layout.addWidget(settings)
@@ -352,11 +380,13 @@ class MainWindow(QMainWindow):
         if self.active_operation is None:
             return
         operation = self.active_operation
+        self._pending_stock_import = None
         self._restoring_operation = True
         try:
             self.order_import_state.replace_orders(list(operation.imported_orders))
         finally:
             self._restoring_operation = False
+        self.stock_controller.sync_loaded_orders(operation.imported_orders)
         if operation.workflow_stage == "manual_linking" and operation.manual_linking_state:
             self.pages.setCurrentWidget(self.manual_linking_page)
             if self.manual_linking_page.restore_session(operation.manual_linking_state):
@@ -379,6 +409,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Operação em andamento", str(error))
         self._refresh_active_operation_card()
         self.pages.setCurrentWidget(self.orders_dashboard)
+        decision, self._pending_stock_import = self._pending_stock_import, None
+        if decision is not None:
+            self.stock_controller.apply_import(decision)
 
     def _open_production_history(self) -> None:
         self.production_history_page.pages.setCurrentIndex(0)
@@ -728,6 +761,14 @@ class MainWindow(QMainWindow):
         finally:
             self._is_importing_orders = False
             self.settings.set_importing(False)
+        # Stock protection runs BEFORE processing: repeated spreadsheet, finalized orders.
+        self._pending_stock_import = None
+        decision = self.stock_controller.review_import(Path(file_path), orders)
+        if decision is None or not decision.orders:
+            self.statusBar().showMessage("Importação cancelada.", 6000)
+            return
+        orders = decision.orders
+        self._pending_stock_import = decision
         analysis = analyze_imported_orders_against_history(
             orders, self.production_history_repository.list_all()
         )
@@ -744,6 +785,7 @@ class MainWindow(QMainWindow):
                 self.active_operation = None
                 self._activate_new_operation(orders, fingerprint, Path(file_path).name)
             else:
+                self._pending_stock_import = None
                 self.pages.setCurrentWidget(self.editor_page)
             return
         if active is not None:
@@ -762,6 +804,7 @@ class MainWindow(QMainWindow):
             warning.addButton("CANCELAR", QMessageBox.ButtonRole.RejectRole)
             warning.exec()
             if warning.clickedButton() is not replace_button:
+                self._pending_stock_import = None
                 self.pages.setCurrentWidget(self.editor_page)
                 return
             self.active_operation_repository.clear_active()
