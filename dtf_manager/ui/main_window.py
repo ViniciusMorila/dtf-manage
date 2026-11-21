@@ -271,7 +271,6 @@ class MainWindow(QMainWindow):
         settings.link_memory_requested.connect(self._open_link_memory)
         settings.continue_operation_requested.connect(self._continue_active_operation)
         settings.cancel_operation_requested.connect(self._cancel_active_operation)
-        settings.finalize_operation_requested.connect(self._finalize_active_operation)
         main_layout.addWidget(settings)
         main_layout.addWidget(self._build_roll_area(), 1)
         artwork = ArtworkPanel()
@@ -478,27 +477,6 @@ class MainWindow(QMainWindow):
         self.stock_controller.cancel_import()
         self.statusBar().showMessage(
             "Operação cancelada. Você pode importar a planilha de novo.", 9000)
-
-    def _finalize_active_operation(self) -> None:
-        """Finalize: deducts the shirts from the stock, zeroes the futuro and closes the work."""
-        if self.active_operation is None:
-            return
-        if self.stock_controller.has_future:
-            if not self.stock_controller.finalize():
-                return                                   # declined (or nothing was deducted)
-        else:
-            answer = QMessageBox.question(
-                self, "Finalizar operação",
-                "Não há camisetas no futuro para dar baixa no estoque. "
-                "Finalizar mesmo assim e encerrar esta operação?")
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-        try:
-            self._end_active_operation()
-        except ActiveOperationStorageError as error:
-            QMessageBox.warning(self, "Operação em andamento", str(error))
-            return
-        self.statusBar().showMessage("Operação finalizada e estoque atualizado.", 9000)
 
     def _open_production_history(self) -> None:
         self.production_history_page.pages.setCurrentIndex(0)

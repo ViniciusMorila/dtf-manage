@@ -922,13 +922,13 @@ class MainWindowStockTests(unittest.TestCase):
         middle = bar.mapTo(self.window.main_tabs, QPoint((first + last) // 2, 0)).x()
         self.assertAlmostEqual(middle, self.window.main_tabs.width() / 2, delta=40)
 
-    def test_operation_card_has_cancel_and_finalize_buttons(self):
+    def test_operation_card_has_only_continue_and_cancel_buttons(self):
         self.reset_operation()
         self.start_operation("card.xlsx", [("K1", "Preta,G", "SKU-K", 1)])
         settings = self.window.settings
         self.assertTrue(settings.active_operation_card.isVisibleTo(settings))
         self.assertEqual(settings.cancel_operation_button.text(), "CANCELAR")
-        self.assertEqual(settings.finalize_operation_button.text(), "FINALIZAR")
+        self.assertFalse(hasattr(settings, "finalize_operation_button"))
         self.reset_operation()
         self.assertFalse(settings.active_operation_card.isVisibleTo(settings))
 
@@ -957,7 +957,7 @@ class MainWindowStockTests(unittest.TestCase):
         self.assertTrue(controller.has_future)
         self.reset_operation()
 
-    def test_finalize_deducts_the_stock_zeroes_the_future_and_closes_the_work(self):
+    def test_sidebar_finalize_button_deducts_the_stock_and_zeroes_the_future(self):
         self.reset_operation()
         controller = self.window.stock_controller
         service = controller.service
@@ -967,32 +967,15 @@ class MainWindowStockTests(unittest.TestCase):
         self.start_operation("finalize.xlsx", [("F1", "Preta,G", "SKU-F", 2)])
         before = service.snapshot().stock[(colors["Preta"], sizes["G"])]
         self.prompts.finalize_answer = False
-        self.window.settings.finalize_operation_button.click()              # declined in the summary
-        self.assertIsNotNone(self.window.active_operation)
+        self.window.settings.finalize_button.click()                        # declined in the summary
         self.assertEqual(service.snapshot().stock[(colors["Preta"], sizes["G"])], before)
         self.prompts.finalize_answer = True
-        self.window.settings.finalize_operation_button.click()
+        self.window.settings.finalize_button.click()
         self.assertEqual(service.snapshot().stock[(colors["Preta"], sizes["G"])], before - 2)
         self.assertFalse(controller.has_future)
-        self.assertIsNone(self.window.active_operation)
-        self.assertEqual(self.window.order_import_state.imported_orders, ())
-        self.assertFalse(self.window.settings.active_operation_card.isVisibleTo(self.window.settings))
         self.assertEqual(len(self.prompts.finalize_summaries), 2)
+        self.reset_operation()
 
-    def test_finalize_without_future_asks_before_closing_the_work(self):
-        from PySide6.QtWidgets import QMessageBox
-        self.reset_operation()
-        self.prompts.validate_answer = {}
-        self.start_operation("nofuture.xlsx", [("N1", "P - M", "SKU-N", 1)])   # no color: pending
-        self.assertFalse(self.window.stock_controller.has_future)
-        with self.answer(QMessageBox.StandardButton.No):
-            self.window.settings.finalize_operation_button.click()
-        self.assertIsNotNone(self.window.active_operation)
-        with self.answer(QMessageBox.StandardButton.Yes):
-            self.window.settings.finalize_operation_button.click()
-        self.assertIsNone(self.window.active_operation)
-        self.assertEqual(self.prompts.finalize_summaries, [])               # nothing to deduct
-        self.reset_operation()
 
 
 if __name__ == "__main__":

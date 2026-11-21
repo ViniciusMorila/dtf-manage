@@ -147,9 +147,7 @@ class ArtStockTab(QWidget):
         self.suggest_button = QPushButton("Sugerir correspondências")
         self.suggest_button.clicked.connect(self.suggest_requested)
         self.suggest_button.hide()
-        self.history_button = QPushButton("Histórico")
-        self.history_button.clicked.connect(self.history_requested)
-        for button in (self.move_button, self.suggest_button, self.history_button):
+        for button in (self.move_button, self.suggest_button):
             buttons.addWidget(button)
         buttons.addStretch()
         left.addLayout(buttons)

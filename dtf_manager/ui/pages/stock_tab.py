@@ -243,7 +243,6 @@ class StockTab(QWidget):
             ("new_size_button", "Novo tamanho", self.new_size_requested),
             ("delete_color_button", "Excluir cor", None),
             ("bulk_button", "Adicionar estoque em massa", self.bulk_requested),
-            ("history_button", "Histórico", self.history_requested),
         ):
             button = QPushButton(text)
             if signal is None:

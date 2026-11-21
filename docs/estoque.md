@@ -17,7 +17,7 @@ Não mexe em licenças nem na API. Tudo é local.
 
 Botões: **Nova cor**, **Novo tamanho** (nome obrigatório; duplicado é recusado ignorando maiúsculas, acentos e
 espaços extras), **Adicionar estoque em massa** (quantidade, cor "todas" ou uma, tamanhos "todos" ou
-selecionados, com confirmação mostrando o que muda), **Excluir cor**, **Contagem rápida** e **Histórico**.
+selecionados, com confirmação mostrando o que muda), **Excluir cor** e **Contagem rápida**.
 
 Cores iniciais: Preta, Marrom, Bege, Branca. Tamanhos: P, M, G, GG. Equivalências iniciais: "preto" = Preta e
 "branco" = Branca.
@@ -104,7 +104,7 @@ Também aparece o aviso "N pedidos já foram montados antes" (do histórico de l
 
 ## Histórico
 
-Botão **Histórico**: movimentos com data e hora, tipo (ajuste manual, adição em massa, importação, finalização),
+Os movimentos (sem botão na tela; ficam gravados no banco): movimentos com data e hora, tipo (ajuste manual, adição em massa, importação, finalização),
 cor, tamanho, quantidade, antes e depois, com filtro por tipo; e uma segunda aba com as planilhas importadas.
 Movimentos de importação mostram o **futuro** (marcado "(futuro)"); os demais mostram o **estoque**.
 
