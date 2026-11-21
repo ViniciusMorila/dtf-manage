@@ -141,13 +141,20 @@ class TabTests(ControllerBase):
         self.assertFalse(bool(self.cell("balance", "Preta", "G").flags() & editable))
         self.assertTrue(bool(self.cell("stock", "Preta", "G").flags() & editable))
 
+    def test_size_rows_alternate_a_lighter_tone_for_contrast(self):
+        from dtf_manager.ui.pages.stock_tab import ROW_DARK, ROW_LIGHT
+        matrix = self.tab.matrix
+        for column in (1, 2, 3):                 # TAM., ESTOQUE, FUTURO
+            tones = [matrix.item(row, column).background().color() for row in range(1, 5)]
+            self.assertEqual(tones, [ROW_DARK, ROW_LIGHT, ROW_DARK, ROW_LIGHT])
+        self.assertEqual(matrix.item(5, 2).background().color(), ROW_DARK)   # next block restarts
+
     def test_color_column_is_painted_with_the_shirt_color(self):
         from dtf_manager.ui.pages.stock_tab import shirt_colors
         matrix = self.tab.matrix
         starts = (1, 5, 9, 13)
-        names = [matrix.item(r, 0).text().splitlines()[0] for r in starts]
-        self.assertEqual(names, ["●  Preta", "●  Marrom", "●  Bege", "●  Branca"])
-        self.assertIn("0 em estoque", matrix.item(1, 0).text())
+        names = [matrix.item(r, 0).text() for r in starts]
+        self.assertEqual(names, ["PRETA", "MARROM", "BEGE", "BRANCA"])
         for row, color in zip(starts, ("Preta", "Marrom", "Bege", "Branca")):
             self.assertEqual(matrix.item(row, 0).background().color(), shirt_colors(color)[0])
         self.assertNotEqual(shirt_colors("Preta")[0], shirt_colors("Branca")[0])

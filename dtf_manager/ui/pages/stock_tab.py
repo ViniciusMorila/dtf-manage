@@ -14,6 +14,8 @@ NEGATIVE = QColor("#ff5a75")
 WARNING = QColor("#e69b45")
 HEADER_ROWS = 1                 # one header row: COR | TAM. | ESTOQUE | FUTURO | SALDO
 COLUMNS = ("COR", "TAM.", "ESTOQUE", "FUTURO", "SALDO")
+ROW_DARK = QColor("#0a090b")
+ROW_LIGHT = QColor("#221d21")
 HEADER_BG = QColor("#100b0d")
 HEADER_FG = QColor("#c9bcc0")
 
@@ -191,8 +193,7 @@ class StockTab(QWidget):
         for block, color in enumerate(snapshot.colors):
             first = HEADER_ROWS + block * len(sizes)
             background, text = shirt_colors(color.name)
-            total = sum(snapshot.stock.get((color.id, size.id), 0) for size in sizes)
-            label = self._header_item(f"●  {color.name}\n{total} em estoque")
+            label = self._header_item(color.name.upper())
             label.setBackground(QBrush(background))
             label.setForeground(QBrush(text))
             label.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
@@ -202,11 +203,14 @@ class StockTab(QWidget):
                 row = first + offset
                 key = (color.id, size.id)
                 stock, future = snapshot.stock.get(key, 0), snapshot.future.get(key, 0)
+                band = QBrush(ROW_LIGHT if offset % 2 else ROW_DARK)   # P dark, M light, G dark...
                 name = self._header_item(size.name)
+                name.setBackground(band)
                 table.setItem(row, 1, name)
                 for kind, value in enumerate((stock, future, stock - future)):
                     item = QTableWidgetItem(str(value))
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    item.setBackground(band)
                     if kind > 0:
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     if kind == 1 and value > 0:
