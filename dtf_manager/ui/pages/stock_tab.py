@@ -216,7 +216,7 @@ class StockTab(QWidget):
                         item.setBackground(QBrush(QColor("#3a0d17")))
                         item.setToolTip("Saldo negativo: faltam camisetas para os pedidos.")
                     table.setItem(row, 2 + kind, item)
-                table.setRowHeight(row, 34)
+                table.setRowHeight(row, 30)
         header = table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
