@@ -120,7 +120,7 @@ class ControllerBase(unittest.TestCase):
 class TabTests(ControllerBase):
     def test_one_block_per_color_with_the_sizes_stacked(self):
         matrix = self.tab.matrix
-        self.assertEqual(matrix.rowCount(), 1 + 4 * 4)             # header + 4 colors x 4 sizes
+        self.assertEqual(matrix.rowCount(), 1 + 4 * 4 + 1)         # header + blocks + Total geral
         self.assertEqual(matrix.columnCount(), 5)
         self.assertEqual([matrix.item(0, c).text() for c in range(5)],
                          ["COR", "TAM.", "ESTOQUE", "FUTURO", "SALDO"])
@@ -172,17 +172,17 @@ class TabTests(ControllerBase):
     def test_new_color_and_size_refuse_duplicates(self):
         self.prompts.names = ["Azul"]
         self.controller.new_color()
-        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 4)
+        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 4 + 1)
         self.prompts.names = ["PRETA"]
         self.controller.new_color()
-        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 4)
+        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 4 + 1)
         self.assertEqual(len(self.prompts.warnings), 1)
         self.prompts.names = ["xg"]
         self.controller.new_size()
-        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 5)
+        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 5 + 1)
         self.prompts.names = [None]
         self.controller.new_size()                                       # cancelled
-        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 5)
+        self.assertEqual(self.tab.matrix.rowCount(), 1 + 5 * 5 + 1)
 
     def test_bulk_add_through_the_controller(self):
         self.prompts.bulk_answer = (3, self.colors["Bege"], None)
@@ -196,18 +196,182 @@ class TabTests(ControllerBase):
     def test_separation_list_checkbox_and_missing_text(self):
         self.service.set_stock(self.colors["Preta"], self.sizes["G"], "2")
         self.run_import(self.orders(n=5, variation="Preta,G") + [make_order("X", ("Bege,M", 1))])
+        self.service.set_stock(self.colors["Bege"], self.sizes["M"], "4")
+        self.controller.refresh()
         table = self.tab.separation_table
+        self.assertEqual(table.columnCount(), 5)
+        self.assertEqual([table.horizontalHeaderItem(c).text() for c in range(5)],
+                         ["COR", "TAM.", "PRECISA", "ESTOQUE", "SEPARADO"])
         self.assertEqual(table.rowCount(), 2)
-        row = [table.item(r, 0).text() for r in range(2)].index("Preta")
-        self.assertEqual([table.item(row, c).text() for c in range(1, 5)], ["G", "5", "2", "3"])
-        table.item(row, 5).setCheckState(Qt.CheckState.Checked)
-        snapshot = self.service.snapshot()
-        self.assertTrue(any(r.separated for r in snapshot.separation))
+        rows = {table.item(r, 0).text(): r for r in range(2)}
+        preta, bege = rows["Preta"], rows["Bege"]
+        self.assertEqual([table.item(preta, c).text() for c in (1, 2, 3)], ["G", "5", "✗"])
+        self.assertEqual(table.item(preta, 3).toolTip(), "Faltam 3")
+        self.assertEqual(table.item(preta, 3).foreground().color(), NEGATIVE)
+        self.assertEqual(table.item(bege, 3).text(), "✓")
+        table.item(preta, 4).setCheckState(Qt.CheckState.Checked)
+        table.item(bege, 4).setCheckState(Qt.CheckState.Checked)       # checkable on every row
+        self.assertEqual(sum(r.separated for r in self.service.snapshot().separation), 2)
         text = self.controller.missing_text()
         self.assertIn("Preta G: 3", text)
-        self.assertIn("Bege M: 1", text)
-        self.assertNotIn("Total: 5", text)
-        self.assertIn("Total: 4", text)
+        self.assertNotIn("Bege", text)
+        self.assertIn("Total: 3", text)
+
+    def test_separation_empty_state_is_centered_and_copy_is_disabled_when_nothing_is_missing(self):
+        self.assertIs(self.tab.separation_stack.currentWidget(), self.tab.empty_label)
+        self.assertTrue(self.tab.empty_label.alignment() & Qt.AlignmentFlag.AlignCenter)
+        self.assertFalse(self.tab.copy_button.isEnabled())
+        self.service.bulk_add(10)
+        self.run_import(self.orders(n=2))                                # stock covers it
+        self.assertIs(self.tab.separation_stack.currentWidget(), self.tab.separation_table)
+        self.assertFalse(self.tab.copy_button.isEnabled())
+        self.assertEqual(self.tab.separation_table.item(0, 3).text(), "✓")
+        self.service.set_stock(self.colors["Preta"], self.sizes["G"], "1")
+        self.controller.refresh()
+        self.assertTrue(self.tab.copy_button.isEnabled())
+
+    def test_summary_cards(self):
+        self.assertEqual(self.tab.stock_card.value_label.text(), "0")
+        self.assertEqual(self.tab.order_card.value_label.text(), "0")
+        self.assertEqual(self.tab.missing_card.value_label.text(), "0 de 0")
+        self.assertEqual(self.tab.missing_card.value_label.property("tone"), "normal")
+        self.assertEqual([self.tab.stock_card.title_label.text(),
+                          self.tab.order_card.title_label.text(),
+                          self.tab.missing_card.title_label.text()],
+                         ["EM ESTOQUE", "TOTAL NO PEDIDO", "FALTAM COMPRAR"])
+        self.service.set_stock(self.colors["Preta"], self.sizes["G"], "2")
+        self.service.set_stock(self.colors["Bege"], self.sizes["M"], "9")
+        self.run_import(self.orders(n=5, variation="Preta,G") + [make_order("X", ("Bege,M", 1))])
+        self.assertEqual(self.tab.stock_card.value_label.text(), "11")
+        self.assertEqual(self.tab.order_card.value_label.text(), "6")
+        self.assertEqual(self.tab.missing_card.value_label.text(), "3 de 6")   # Bege is covered
+        self.assertEqual(self.tab.missing_card.value_label.property("tone"), "alert")
+
+    def test_only_one_total_row_at_the_end_and_no_total_per_color(self):
+        from dtf_manager.ui.pages.stock_tab import ZERO, WARNING, NORMAL
+        self.service.set_stock(self.colors["Preta"], self.sizes["G"], "4")
+        self.service.set_stock(self.colors["Bege"], self.sizes["M"], "3")
+        self.run_import(self.orders(n=6, variation="Preta,G"))
+        matrix = self.tab.matrix
+        labels = [matrix.item(r, 0).text() for r in range(matrix.rowCount())
+                  if matrix.item(r, 0) is not None and matrix.item(r, 0).text()]
+        self.assertEqual(labels, ["COR", "PRETA", "MARROM", "BEGE", "BRANCA", "TOTAL GERAL"])
+        last = matrix.rowCount() - 1
+        self.assertEqual(matrix.item(last, 0).text(), "TOTAL GERAL")
+        self.assertEqual([matrix.item(last, c).text() for c in (2, 3, 4)], ["7", "6", "1"])
+        editable = Qt.ItemFlag.ItemIsEditable
+        self.assertFalse(bool(matrix.item(last, 2).flags() & editable))
+        self.assertNotIn(last, matrix.stock_rows)
+        # value tones: zero weak gray, positive normal, futuro > 0 amber
+        self.assertEqual(self.cell("stock", "Marrom", "P").foreground().color(), ZERO)
+        self.assertEqual(self.cell("stock", "Preta", "G").foreground().color(), NORMAL)
+        self.assertEqual(self.cell("future", "Preta", "G").foreground().color(), WARNING)
+        self.assertEqual(self.cell("future", "Marrom", "P").foreground().color(), ZERO)
+        self.assertEqual(self.cell("balance", "Preta", "G").foreground().color(), NEGATIVE)
+
+    # ---- keyboard editing ----------------------------------------------------------------
+    def editor(self):
+        from PySide6.QtWidgets import QLineEdit
+        self.app.processEvents()
+        boxes = [w for w in self.tab.matrix.findChildren(QLineEdit) if w.isVisible()]
+        return boxes[-1] if boxes else None
+
+    def press(self, widget, key, modifiers=Qt.KeyboardModifier.NoModifier):
+        from PySide6.QtTest import QTest
+        QTest.keyClick(widget, key, modifiers)
+        self.app.processEvents()
+
+    def current(self):
+        return (self.tab.matrix.currentRow(), self.tab.matrix.currentColumn())
+
+    def test_enter_confirms_and_goes_down_and_tab_moves_between_stock_cells(self):
+        self.tab.show()
+        matrix = self.tab.matrix
+        first = matrix.stock_rows[0]
+        matrix.edit_stock_row(first)
+        editor = self.editor()
+        editor.setText("5")
+        self.press(editor, Qt.Key.Key_Return)
+        self.assertEqual(stock_of(self.service, "Preta", "P"), 5)       # saved
+        self.assertEqual(self.current(), (first + 1, 2))                 # next size, editing
+        self.assertIsNotNone(self.editor())
+        editor = self.editor()
+        editor.setText("6")
+        self.press(editor, Qt.Key.Key_Tab)
+        self.assertEqual(stock_of(self.service, "Preta", "M"), 6)
+        self.assertEqual(self.current(), (first + 2, 2))
+        self.press(self.editor(), Qt.Key.Key_Backtab)
+        self.assertEqual(self.current(), (first + 1, 2))
+        self.assertEqual(self.cell("stock", "Preta", "P").text(), "5")   # still shown
+        self.assertEqual(self.tab.stock_card.value_label.text(), "11")
+
+    def test_the_total_row_is_never_entered_by_the_keyboard(self):
+        self.tab.show()
+        matrix = self.tab.matrix
+        last = matrix.stock_rows[-1]
+        matrix.edit_stock_row(last)
+        self.editor().setText("2")
+        self.press(self.editor(), Qt.Key.Key_Return)
+        self.assertEqual(stock_of(self.service, "Branca", "GG"), 2)
+        self.assertLess(self.current()[0], matrix.rowCount() - 1)
+
+    def test_hover_highlights_editable_cells_only(self):
+        from dtf_manager.ui.pages.stock_tab import HOVER_BG
+        matrix = self.tab.matrix
+        row = matrix.stock_rows[0]
+        matrix.set_hover((row, 2))
+        self.assertEqual(self.cell("stock", "Preta", "P").background().color(), HOVER_BG)
+        matrix.set_hover(None)
+        self.assertNotEqual(self.cell("stock", "Preta", "P").background().color(), HOVER_BG)
+        self.assertEqual(self.cell("stock", "Preta", "P").background().color(),
+                         self.cell("stock", "Preta", "P").data(Qt.ItemDataRole.UserRole + 1))
+
+    def test_quick_count_walks_the_stock_cells_and_logs_manual_adjustments(self):
+        self.tab.show()
+        self.tab.quick_button.click()
+        self.assertTrue(self.tab.matrix.quick_mode)
+        self.assertTrue(self.tab.quick_banner.isVisibleTo(self.tab))
+        self.assertEqual(self.current(), (self.tab.matrix.stock_rows[0], 2))
+        for text in ("3", "", "4"):               # P=3, M unchanged (empty -> refused), G=4
+            editor = self.editor()
+            editor.setText(text)
+            self.press(editor, Qt.Key.Key_Return)
+        self.assertEqual(stock_of(self.service, "Preta", "P"), 3)
+        self.assertEqual(stock_of(self.service, "Preta", "G"), 4)
+        self.assertEqual(self.current(), (self.tab.matrix.stock_rows[3], 2))
+        self.press(self.editor(), Qt.Key.Key_Escape)                      # leave
+        self.assertFalse(self.tab.matrix.quick_mode)
+        self.assertFalse(self.tab.quick_button.isChecked())
+        self.assertFalse(self.tab.quick_banner.isVisibleTo(self.tab))
+        kinds = {(m.kind, m.color, m.size, m.before, m.after) for m in self.service.movements()}
+        self.assertIn(("ajuste_manual", "Preta", "P", 0, 3), kinds)
+        self.assertIn(("ajuste_manual", "Preta", "G", 0, 4), kinds)
+        self.assertEqual(len([m for m in self.service.movements()]), 2)   # unchanged cells log nothing
+
+    def test_quick_count_ends_by_itself_after_the_last_cell(self):
+        self.tab.show()
+        self.tab.start_quick_count()
+        for _ in self.tab.matrix.stock_rows:
+            editor = self.editor()
+            editor.setText("1")
+            self.press(editor, Qt.Key.Key_Return)
+        self.assertFalse(self.tab.matrix.quick_mode)
+        self.assertFalse(self.tab.quick_button.isChecked())
+        self.app.processEvents()                                  # the last refresh is deferred
+        self.assertEqual(self.tab.stock_card.value_label.text(), "16")
+        self.assertEqual(len(self.service.movements()), 16)
+
+    def test_quick_count_button_toggles_off(self):
+        self.tab.show()
+        self.tab.quick_button.click()
+        self.tab.quick_button.click()
+        self.assertFalse(self.tab.matrix.quick_mode)
+        self.assertFalse(self.tab.quick_banner.isVisibleTo(self.tab))
+
+    def test_edit_hint_is_larger_and_has_its_own_style(self):
+        self.assertEqual(self.tab.hint_label.objectName(), "stockHint")
+        self.assertIn("Enter", self.tab.hint_label.text())
+        self.assertIn("Esc", self.tab.hint_label.text())
 
     def test_aliases_are_editable_and_change_how_names_are_read(self):
         self.prompts.aliases_answer = [("color", "Black", self.colors["Preta"])]
