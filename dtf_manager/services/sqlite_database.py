@@ -5,7 +5,8 @@ import sqlite3
 from PySide6.QtCore import QStandardPaths
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+STOCK_BACKUP_SUFFIX = ".antes-do-estoque.bak"
 
 
 class DTFDatabase:
@@ -37,7 +38,35 @@ class DTFDatabase:
         finally:
             connection.close()
 
+    def _backup_before_stock_migration(self) -> None:
+        """Copy an existing database next to the original before the stock tables are added.
+
+        Runs once: only when the file already exists, has no stock tables yet and no backup exists."""
+        backup = self.path.with_name(self.path.name + STOCK_BACKUP_SUFFIX)
+        if not self.path.exists() or self.path.stat().st_size == 0 or backup.exists():
+            return
+        source = sqlite3.connect(self.path, timeout=10)
+        try:
+            has_stock = source.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='stock_colors'"
+            ).fetchone()
+            has_tables = source.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table'"
+            ).fetchone()
+            if has_stock or not has_tables:
+                return
+            temporary = backup.with_name(backup.name + ".tmp")
+            target = sqlite3.connect(temporary)
+            try:
+                source.backup(target)      # consistent copy, WAL included
+            finally:
+                target.close()
+            temporary.replace(backup)
+        finally:
+            source.close()
+
     def _initialize(self) -> None:
+        self._backup_before_stock_migration()
         with self.transaction() as db:
             db.executescript(
                 """
@@ -89,6 +118,78 @@ class DTFDatabase:
                     order_number TEXT PRIMARY KEY,
                     fingerprint TEXT NOT NULL,
                     processed_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS stock_colors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    norm TEXT NOT NULL UNIQUE
+                );
+                CREATE TABLE IF NOT EXISTS stock_sizes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    norm TEXT NOT NULL UNIQUE
+                );
+                CREATE TABLE IF NOT EXISTS stock_levels (
+                    color_id INTEGER NOT NULL REFERENCES stock_colors(id),
+                    size_id INTEGER NOT NULL REFERENCES stock_sizes(id),
+                    quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity >= 0),
+                    PRIMARY KEY(color_id, size_id)
+                );
+                CREATE TABLE IF NOT EXISTS stock_future (
+                    color_id INTEGER NOT NULL REFERENCES stock_colors(id),
+                    size_id INTEGER NOT NULL REFERENCES stock_sizes(id),
+                    quantity INTEGER NOT NULL CHECK(quantity > 0),
+                    separated INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(color_id, size_id)
+                );
+                CREATE TABLE IF NOT EXISTS stock_aliases (
+                    kind TEXT NOT NULL CHECK(kind IN ('color','size')),
+                    alias_norm TEXT NOT NULL,
+                    target_id INTEGER NOT NULL,
+                    PRIMARY KEY(kind, alias_norm)
+                );
+                CREATE TABLE IF NOT EXISTS stock_sku_colors (
+                    sku_norm TEXT PRIMARY KEY,
+                    color_id INTEGER NOT NULL REFERENCES stock_colors(id)
+                );
+                CREATE TABLE IF NOT EXISTS stock_pending (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_name TEXT NOT NULL,
+                    sku TEXT NOT NULL,
+                    variation TEXT NOT NULL,
+                    sizes TEXT NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    reason TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS stock_movements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    at TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    scope TEXT NOT NULL DEFAULT 'estoque',
+                    color TEXT NOT NULL,
+                    size TEXT NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    before INTEGER NOT NULL,
+                    after INTEGER NOT NULL,
+                    note TEXT NOT NULL DEFAULT ''
+                );
+                CREATE TABLE IF NOT EXISTS stock_imports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    at TEXT NOT NULL,
+                    file_name TEXT NOT NULL,
+                    file_hash TEXT NOT NULL,
+                    order_count INTEGER NOT NULL,
+                    orders_json TEXT NOT NULL,
+                    finalized_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS stock_finalized_orders (
+                    order_number TEXT PRIMARY KEY,
+                    finalized_at TEXT NOT NULL,
+                    import_id INTEGER
+                );
+                CREATE TABLE IF NOT EXISTS stock_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
                 );
                 """
             )
