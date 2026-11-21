@@ -740,6 +740,28 @@ class MainWindowArtTests(unittest.TestCase):
         repo.set_state("counted_orders", "[]")
         self._clean_roll()
 
+    def test_limpar_rolo_removes_every_art_from_the_roll_and_the_list(self):
+        from PySide6.QtWidgets import QMessageBox
+        window = self.window
+        window.settings.folder_selected.emit(self.art_folder)
+        self._clean_roll()
+        arts, panel = window.art_controller, window.artwork_panel
+        panel.add_configured_artwork(self.a, 5, 5, 2, manual=True)
+        panel.add_configured_artwork(self.b, 5, 5, 1)
+        self.app.processEvents()
+        self.assertEqual(window.clear_roll_button.text(), "LIMPAR ROLO")
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
+            window.clear_roll_button.click()
+        self.assertEqual(len(panel._artwork_cards), 2)                            # declined: nothing happens
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            window.clear_roll_button.click()
+        self.app.processEvents()
+        self.app.processEvents()
+        self.assertEqual(panel._artwork_cards, [])
+        self.assertFalse(window.roll_view.has_artworks)
+        self.assertEqual(row_of(arts.service, "a.png").future, 0)                 # hand-added copies left
+        self._clean_roll()
+
     def test_roll_cards_built_from_orders_are_not_counted_twice(self):
         window = self.window
         window.settings.folder_selected.emit(self.art_folder)

@@ -905,6 +905,11 @@ class MainWindow(QMainWindow):
         header.addWidget(self.zoom_label)
         header.addWidget(zoom_in)
         header.addWidget(fit)
+        self.clear_roll_button = QPushButton("LIMPAR ROLO")
+        self.clear_roll_button.setObjectName("iconButton")
+        self.clear_roll_button.setToolTip("Remove todas as artes do rolo e da lista de artes.")
+        self.clear_roll_button.clicked.connect(self._clear_roll)
+        header.addWidget(self.clear_roll_button)
         layout.addLayout(header)
         canvas = QFrame()
         self.roll_canvas = canvas
@@ -929,6 +934,18 @@ class MainWindow(QMainWindow):
         zoom_in.clicked.connect(self._zoom_in)
         fit.clicked.connect(self._fit_roll)
         return area
+
+    def _clear_roll(self) -> None:
+        """LIMPAR ROLO: removes every art from the roll and from the list on the right."""
+        if not self.roll_view.has_artworks and not self.artwork_panel.artwork_entries():
+            return
+        answer = QMessageBox.question(
+            self, "Limpar rolo",
+            "Remover todas as artes do rolo e da lista de artes?")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._clear_roll_project()
+        self._update_zoom_label()
 
     def _set_roll_canvas_visible(self, visible: bool) -> None:
         self.roll_canvas.setVisible(visible)
