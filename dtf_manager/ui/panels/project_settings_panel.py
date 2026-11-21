@@ -112,7 +112,7 @@ class ProjectSettingsPanel(QFrame):
         self.width_input.setRange(1, 2000)
         self.width_input.setValue(DEFAULT_FILM_WIDTH_MM / 10)
         self.width_input.setSuffix(" cm")
-        self.width_input.setDecimals(2)
+        self.width_input.setDecimals(0)
         self.width_input.setButtonSymbols(EditableDoubleSpinBox.ButtonSymbols.UpDownArrows)
         self.width_input.valueChanged.connect(self._emit_roll_settings)
         width_row.addWidget(self.width_input)
