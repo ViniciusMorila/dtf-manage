@@ -57,6 +57,10 @@ class MainWindowLicenseTests(unittest.TestCase):
     def label(self):
         return self.window.license_label
 
+    def test_the_title_bar_shows_the_app_version(self):
+        from dtf_manager.core.version import APP_VERSION
+        self.assertIn(APP_VERSION, self.window.windowTitle())
+
     def test_nothing_is_shown_before_the_first_validation(self):
         self.assertFalse(self.label().isVisible())
         self.assertFalse(self.window.greeting_label.isVisible())

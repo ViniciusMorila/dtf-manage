@@ -91,6 +91,36 @@ class StockService:
         return found if found is not None else self.repository.add_size(
             " ".join(value.split()), db=db).id
 
+    def preview_delete_color(self, color_id: int):
+        """(name, units in stock, units in the futuro) of a color that is about to be removed."""
+        repo = self.repository
+        with repo.tx() as db:
+            color = next((c for c in repo.colors(db) if c.id == color_id), None)
+            if color is None:
+                raise StockError("Essa cor não existe mais.")
+            stock = sum(q for (cid, _), q in repo.levels(db).items() if cid == color_id)
+            future = sum(q for (cid, _), (q, _) in repo.future(db).items() if cid == color_id)
+        return color.name, stock, future
+
+    def delete_color(self, color_id: int) -> tuple[str, int, int]:
+        """Removes a color with its stock, futuro, SKU mappings and equivalences (one
+        transaction). What it held is logged as manual adjustments to 0 so the history keeps it.
+        Past movements keep the color name as text."""
+        repo = self.repository
+        with repo.tx() as db:
+            name, stock, future = self.preview_delete_color(color_id)
+            sizes = {s.id: s.name for s in repo.sizes(db)}
+            for (cid, sid), quantity in sorted(repo.levels(db).items()):
+                if cid == color_id and quantity > 0:
+                    repo.add_movement(MOVEMENT_MANUAL, "estoque", name, sizes[sid], quantity, 0,
+                                      note="Cor excluída", db=db)
+            for (cid, sid), (quantity, _) in sorted(repo.future(db).items()):
+                if cid == color_id:
+                    repo.add_movement(MOVEMENT_IMPORT, "futuro", name, sizes[sid], quantity, 0,
+                                      note="Cor excluída", db=db)
+            repo.delete_color(color_id, db=db)
+        return name, stock, future
+
     def replace_aliases(self, rows) -> None:
         """rows: (kind, text, target_id). Text is normalized; empty or duplicate rows ignored."""
         clean = {}
@@ -267,7 +297,9 @@ class StockService:
             key=key, product_name=first.item.product_name, sku=first.item.sku,
             variation=" | ".join(variations), sizes_text=" | ".join(sizes), shirts=shirts,
             needs_color=needs_color, needs_size=needs_size,
-            color_hint=first.color_hint, reason=reason)
+            color_hint=first.color_hint, reason=reason,
+            image_url=next((e.item.product_image_url for e in entries
+                            if e.item.product_image_url), "") or "")
 
     def commit_import(self, prep: Preparation, decisions: dict, file_name: str,
                       file_hash: str) -> ImportResult:
@@ -381,9 +413,11 @@ class StockService:
         self.repository.set_state("signature", signature_of(order_numbers))
 
     # ---- finalizing -----------------------------------------------------------------------------
-    def finalize_summary(self) -> FinalizeSummary | None:
+    def finalize_summary(self, arts=None) -> FinalizeSummary | None:
+        """What finalizing would do. `arts` (an ArtStockService) adds the art stock to the summary."""
         snapshot = self.snapshot()
-        if not snapshot.has_future:
+        art_rows = tuple(arts.finalize_preview()) if arts is not None else ()
+        if not snapshot.has_future and not art_rows:
             return None
         colors = {c.id: c.name for c in snapshot.colors}
         sizes = {s.id: s.name for s in snapshot.sizes}
@@ -392,16 +426,20 @@ class StockService:
             have = snapshot.stock.get((cid, sid), 0)
             rows.append(FinalizeRow(colors[cid], sizes[sid], future, have,
                                     max(0, have - future), max(0, future - have)))
-        return FinalizeSummary(tuple(rows), sum(p.quantity for p in snapshot.pending))
+        return FinalizeSummary(tuple(rows), sum(p.quantity for p in snapshot.pending), art_rows)
 
-    def finalize(self) -> FinalizeSummary | None:
+    def finalize(self, arts=None) -> FinalizeSummary | None:
         """Deducts the futuro from the stock (never below zero) and clears it. One transaction.
 
-        Returns what was done, or None when there is no futuro (nothing to do)."""
+        With `arts` (an ArtStockService) the shirts and the arts are deducted in the SAME
+        transaction: both are saved or neither is. Returns what was done, or None when there is
+        no futuro at all (nothing to do)."""
         repo = self.repository
         with repo.tx() as db:
             future = repo.future(db)
-            if not any(q > 0 for q, _ in future.values()):
+            art_future = arts is not None and any(
+                q > 0 for q, _ in arts.repository.future(db).values())
+            if not art_future and not any(q > 0 for q, _ in future.values()):
                 return None
             levels = repo.levels(db)
             names = self._names(db)
@@ -419,6 +457,7 @@ class StockService:
                     note += f"; faltaram {shortage} no estoque (ficou em 0)"
                 repo.add_movement(MOVEMENT_FINALIZE, "estoque", names[0][cid], names[1][sid],
                                   before, after, note=note, db=db)
+            art_rows = arts.finalize_apply(db) if art_future else ()
             at = now_text()
             counted = json.loads(repo.get_state("counted_orders", "[]", db=db))
             import_id = repo.get_state("current_import_id", db=db)
@@ -429,7 +468,31 @@ class StockService:
             repo.replace_pending([], db=db)
             repo.set_state("counted_orders", "[]", db=db)
             repo.set_state("import_note", "", db=db)
-        return FinalizeSummary(tuple(rows), sum(p.quantity for p in pending))
+        return FinalizeSummary(tuple(rows), sum(p.quantity for p in pending), tuple(art_rows))
+
+    def cancel_current_import(self, arts=None) -> bool:
+        """The user cancelled the operation: drops the futuro and the record of that spreadsheet
+        so the file can be imported again as if it never was. Stock is untouched. Nothing is
+        done when the import was already finalized (its orders stay protected)."""
+        repo = self.repository
+        with repo.tx() as db:
+            import_id = repo.get_state("current_import_id", db=db)
+            record = repo.get_import(int(import_id), db=db) if import_id else None
+            if record is None or record.finalized_at:
+                return False
+            names = self._names(db)
+            if arts is not None:
+                arts.cancel_future(db)
+            for (cid, sid), (quantity, _) in sorted(repo.future(db).items()):
+                repo.add_movement(MOVEMENT_IMPORT, "futuro", names[0][cid], names[1][sid],
+                                  quantity, 0, note="Operação cancelada", db=db)
+            repo.replace_future({}, db=db)
+            repo.replace_pending([], db=db)
+            repo.delete_import(record.id, db=db)
+            for key in ("current_import_id", "signature", "import_note"):
+                repo.set_state(key, "", db=db)
+            repo.set_state("counted_orders", "[]", db=db)
+        return True
 
     # ---- history -----------------------------------------------------------------------------------
     def movements(self, limit: int = 1000):

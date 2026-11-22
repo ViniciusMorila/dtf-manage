@@ -68,6 +68,15 @@ class StockRepository:
                                (name, normalize_name(name)))
             return StockColor(cursor.lastrowid, name)
 
+    def delete_color(self, color_id: int, db=None) -> None:
+        """Removes the color and everything that points to it."""
+        with self.tx(db) as c:
+            c.execute("DELETE FROM stock_levels WHERE color_id=?", (color_id,))
+            c.execute("DELETE FROM stock_future WHERE color_id=?", (color_id,))
+            c.execute("DELETE FROM stock_sku_colors WHERE color_id=?", (color_id,))
+            c.execute("DELETE FROM stock_aliases WHERE kind='color' AND target_id=?", (color_id,))
+            c.execute("DELETE FROM stock_colors WHERE id=?", (color_id,))
+
     def add_size(self, name: str, db=None) -> StockSize:
         with self.tx(db) as c:
             cursor = c.execute("INSERT INTO stock_sizes(name, norm) VALUES(?,?)",
@@ -154,17 +163,18 @@ class StockRepository:
 
     # ---- history ---------------------------------------------------------------------
     def add_movement(self, kind, scope, color, size, before, after, note="", db=None,
-                     at: str | None = None) -> None:
+                     at: str | None = None, produto: str = "camiseta") -> None:
         with self.tx(db) as c:
             c.execute(
-                "INSERT INTO stock_movements(at,kind,scope,color,size,quantity,before,after,note)"
-                " VALUES(?,?,?,?,?,?,?,?,?)",
-                (at or now_text(), kind, scope, color, size, after - before, before, after, note))
+                "INSERT INTO stock_movements(at,kind,scope,color,size,quantity,before,after,note,"
+                "produto) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (at or now_text(), kind, scope, color, size, after - before, before, after, note,
+                 produto))
 
     def movements(self, limit: int = 1000, db=None) -> list[Movement]:
         with self.tx(db) as c:
             return [Movement(r["id"], r["at"], r["kind"], r["scope"], r["color"], r["size"],
-                             r["quantity"], r["before"], r["after"], r["note"])
+                             r["quantity"], r["before"], r["after"], r["note"], r["produto"])
                     for r in c.execute(
                         "SELECT * FROM stock_movements ORDER BY id DESC LIMIT ?", (limit,))]
 
@@ -190,6 +200,10 @@ class StockRepository:
                 " VALUES(?,?,?,?,?)",
                 (now_text(), file_name, file_hash, len(orders),
                  json.dumps(list(orders)))).lastrowid
+
+    def delete_import(self, import_id: int, db=None) -> None:
+        with self.tx(db) as c:
+            c.execute("DELETE FROM stock_imports WHERE id=?", (import_id,))
 
     def mark_import_finalized(self, import_id: int, at: str, db=None) -> None:
         with self.tx(db) as c:

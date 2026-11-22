@@ -12,6 +12,7 @@ from PySide6.QtGui import QCloseEvent, QFont
 from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
 
 from dtf_manager.core.constants import APP_NAME
+from dtf_manager.core.version import APP_VERSION
 from dtf_manager.ui.panels.artwork_panel import ArtworkPanel
 from dtf_manager.ui.panels.project_settings_panel import ProjectSettingsPanel
 from dtf_manager.ui.styles import APP_STYLE
@@ -50,6 +51,11 @@ from dtf_manager.core.stock_controller import StockController
 from dtf_manager.services.stock_repository import StockRepository
 from dtf_manager.services.stock_service import StockService
 from dtf_manager.ui.pages.stock_tab import StockTab
+from dtf_manager.core.art_stock_controller import ArtStockController
+from dtf_manager.services.art_stock_repository import ArtStockRepository
+from dtf_manager.services.art_stock_service import ArtStockService
+from dtf_manager.services.thumbnail_cache import IdenticalFilesScanner, ThumbnailCache
+from dtf_manager.ui.pages.art_stock_tab import ArtStockTab
 from dtf_manager.ui.widgets.stock_dialogs import StockPrompts
 
 
@@ -69,7 +75,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         QCoreApplication.setOrganizationName("DTF Manager")
         QCoreApplication.setApplicationName("DTF Manager")
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
         self.resize(1600, 900)
         self.setMinimumSize(1280, 720)
         self.order_import_state = OrderImportState()
@@ -208,7 +214,7 @@ class MainWindow(QMainWindow):
         """DTF (the existing pages, unchanged) + the two stock tabs."""
         self.main_tabs = QTabWidget()
         self.main_tabs.setObjectName("mainTabs")
-        self.main_tabs.setDocumentMode(True)
+        self.main_tabs.setDocumentMode(False)      # the QSS centers the tab bar
         self.main_tabs.addTab(self.pages, "DTF")
         self.stock_tab = StockTab()
         self.stock_controller = StockController(
@@ -216,11 +222,20 @@ class MainWindow(QMainWindow):
             self.stock_tab, mounted_lookup=self.processed_order_repository.known_orders,
             parent=self)
         self.main_tabs.addTab(self.stock_tab, "Estoque de camisetas")
-        prints = QLabel("Em breve")
-        prints.setObjectName("emptyState")
-        prints.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.prints_tab = prints
-        self.main_tabs.addTab(prints, "Estoque de estampas")
+        self.prints_tab = ArtStockTab()
+        self.thumbnails = ThumbnailCache(parent=self)
+        self.prints_tab.set_thumbnails(self.thumbnails)
+        self.art_controller = ArtStockController(
+            ArtStockService(ArtStockRepository(self.database), self.stock_controller.service.repository),
+            self.stock_controller.prompts, self.prints_tab,
+            orders_provider=lambda: self.order_import_state.imported_orders,
+            folder_provider=lambda: getattr(getattr(self, "settings", None), "folder_path", None),
+            scanner=IdenticalFilesScanner(self), thumbs=self.thumbnails, parent=self)
+        self.stock_controller.arts = self.art_controller
+        self.prints_tab.history_requested.connect(self.stock_controller.show_history)
+        self.prints_tab.manual_link_requested.connect(self._open_manual_links_from_stock)
+        self.main_tabs.addTab(self.prints_tab, "Estoque de estampas")
+        self.main_tabs.currentChanged.connect(self._tab_changed)
         self.setCentralWidget(self.main_tabs)
 
     def _build_ui(self):
@@ -248,9 +263,15 @@ class MainWindow(QMainWindow):
         settings.import_orders_requested.connect(self._import_orders)
         settings.finalize_requested.connect(self.stock_controller.finalize)
         self.stock_controller.changed.connect(settings.set_finalize_enabled)
+        self.art_controller.changed.connect(
+            lambda: settings.set_finalize_enabled(self.stock_controller.has_future))
+        settings.folder_selected.connect(self.art_controller.set_folder)
+        self.art_controller.set_folder(settings.folder_path)
+        self.order_import_state.changed.connect(self.art_controller.schedule_recalc)
         settings.set_finalize_enabled(self.stock_controller.has_future)
         settings.link_memory_requested.connect(self._open_link_memory)
         settings.continue_operation_requested.connect(self._continue_active_operation)
+        settings.cancel_operation_requested.connect(self._cancel_active_operation)
         main_layout.addWidget(settings)
         main_layout.addWidget(self._build_roll_area(), 1)
         artwork = ArtworkPanel()
@@ -274,6 +295,12 @@ class MainWindow(QMainWindow):
         artwork.artwork_selection_requested.connect(
             lambda file_path: self.roll_view.select_artwork(str(file_path))
         )
+        artwork.artwork_locate_requested.connect(
+            lambda file_path: self.roll_view.select_artwork(str(file_path), center=True)
+        )
+        self.roll_view.artwork_selected.connect(artwork.highlight_roll_key)
+        artwork.manual_copies_changed.connect(self.art_controller.set_manual_copies)
+        self.art_controller.manual_consumed.connect(artwork.clear_manual_flags)
         self.roll_view.used_length_changed.connect(artwork.set_used_meters)
         self.roll_view.used_length_changed.connect(self._update_used_length)
         self.roll_view.selected_copy_removed.connect(
@@ -412,6 +439,51 @@ class MainWindow(QMainWindow):
         decision, self._pending_stock_import = self._pending_stock_import, None
         if decision is not None:
             self.stock_controller.apply_import(decision)
+
+    def _tab_changed(self, index: int) -> None:
+        """Opening the art-stock tab re-reads the art folder (new or renamed files)."""
+        if self.main_tabs.widget(index) is self.prints_tab:
+            self.art_controller.refresh_folder()
+
+    def _open_manual_links_from_stock(self) -> None:
+        """Shortcut of the art-stock notice: back to the DTF tab, in the manual linking queue."""
+        self.main_tabs.setCurrentIndex(0)
+        self._open_manual_queue()
+
+    def _end_active_operation(self) -> None:
+        """Forgets the active operation and the orders loaded for it (project back to empty)."""
+        self.active_operation_repository.clear_active()
+        self.active_operation = None
+        self._restoring_operation = True
+        try:
+            self.order_import_state.replace_orders([])
+        finally:
+            self._restoring_operation = False
+        self._pending_stock_import = None
+        self._refresh_active_operation_card()
+        self.pages.setCurrentWidget(self.editor_page)
+
+    def _cancel_active_operation(self) -> None:
+        """Cancel: drops this spreadsheet's work so it can be imported again from zero."""
+        operation = self.active_operation
+        if operation is None:
+            return
+        answer = QMessageBox.question(
+            self, "Cancelar operação",
+            f"Cancelar esta operação ({operation.metadata.order_count} pedidos)?\n\n"
+            "Os pedidos saem do projeto, os vínculos feitos nela são descartados e o futuro de "
+            "camisetas dessa planilha é zerado. O estoque não muda. Você poderá importar a "
+            "planilha de novo e começar do zero.")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._end_active_operation()
+        except ActiveOperationStorageError as error:
+            QMessageBox.warning(self, "Operação em andamento", str(error))
+            return
+        self.stock_controller.cancel_import()
+        self.statusBar().showMessage(
+            "Operação cancelada. Você pode importar a planilha de novo.", 9000)
 
     def _open_production_history(self) -> None:
         self.production_history_page.pages.setCurrentIndex(0)
@@ -557,7 +629,7 @@ class MainWindow(QMainWindow):
                 for path, width, height, quantity in previous_entries:
                     self.artwork_panel.add_configured_artwork(path, width, height, quantity)
                 raise
-            self.roll_canvas.show()
+            self._set_roll_canvas_visible(True)
             self.pages.setCurrentWidget(self.editor_page)
             try:
                 batch_number = self.production_history_repository.next_batch_number()
@@ -612,6 +684,7 @@ class MainWindow(QMainWindow):
     def _clear_roll_project(self) -> None:
         self.artwork_panel.clear_artworks()
         self.roll_view.clear_artworks()
+        self._set_roll_canvas_visible(False)
 
     def _automatic_link_orders(self) -> None:
         if self._is_auto_linking or not self.order_import_state.all_items:
@@ -692,13 +765,13 @@ class MainWindow(QMainWindow):
         artwork.set_roll_settings(width_mm, cost)
 
     def _add_to_roll(self, file_path: str, width_mm: float, height_mm: float, quantity: int) -> None:
-        self.roll_canvas.show()
+        self._set_roll_canvas_visible(True)
         self.roll_view.add_artwork(file_path, width_mm, height_mm, quantity)
 
     def _remove_from_roll(self, file_path: Path) -> None:
         self.roll_view.remove_artwork(str(file_path))
         if not self.roll_view._artwork_items:
-            self.roll_canvas.hide()
+            self._set_roll_canvas_visible(False)
 
     def _set_artwork_folder(self, artwork: ArtworkPanel, folder: Path) -> None:
         artwork.artwork_folder = folder
@@ -718,7 +791,7 @@ class MainWindow(QMainWindow):
             if dialog.exec() == dialog.DialogCode.Accepted:
                 configured_width, configured_height, quantity = dialog.dimensions
                 artwork.add_configured_artwork(
-                    selected_path, configured_width, configured_height, quantity
+                    selected_path, configured_width, configured_height, quantity, manual=True
                 )
 
     def _import_orders(self) -> None:
@@ -833,6 +906,11 @@ class MainWindow(QMainWindow):
         header.addWidget(self.zoom_label)
         header.addWidget(zoom_in)
         header.addWidget(fit)
+        self.clear_roll_button = QPushButton("LIMPAR ROLO")
+        self.clear_roll_button.setObjectName("iconButton")
+        self.clear_roll_button.setToolTip("Remove todas as artes do rolo e da lista de artes.")
+        self.clear_roll_button.clicked.connect(self._clear_roll)
+        header.addWidget(self.clear_roll_button)
         layout.addLayout(header)
         canvas = QFrame()
         self.roll_canvas = canvas
@@ -843,7 +921,10 @@ class MainWindow(QMainWindow):
         canvas_layout.addWidget(self.roll_view, 1)
         layout.addWidget(canvas, 1)
         canvas.hide()
-        layout.addStretch(1)   # keeps the footer at the very bottom while the canvas is hidden
+        # Fills the space (keeping the footer at the bottom) only while the canvas is hidden;
+        # with the canvas visible the roll takes all the height down to the footer.
+        self.roll_spacer = QWidget()
+        layout.addWidget(self.roll_spacer, 1)
         footer = QHBoxLayout()
         self.used_length_label = QLabel("Comprimento utilizado: 0,00 m")
         footer.addWidget(self.used_length_label)
@@ -854,6 +935,22 @@ class MainWindow(QMainWindow):
         zoom_in.clicked.connect(self._zoom_in)
         fit.clicked.connect(self._fit_roll)
         return area
+
+    def _clear_roll(self) -> None:
+        """LIMPAR ROLO: removes every art from the roll and from the list on the right."""
+        if not self.roll_view.has_artworks and not self.artwork_panel.artwork_entries():
+            return
+        answer = QMessageBox.question(
+            self, "Limpar rolo",
+            "Remover todas as artes do rolo e da lista de artes?")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._clear_roll_project()
+        self._update_zoom_label()
+
+    def _set_roll_canvas_visible(self, visible: bool) -> None:
+        self.roll_canvas.setVisible(visible)
+        self.roll_spacer.setVisible(not visible)
 
     def _update_used_length(self, used_meters: float) -> None:
         formatted = f"{used_meters:.2f}".replace(".", ",")

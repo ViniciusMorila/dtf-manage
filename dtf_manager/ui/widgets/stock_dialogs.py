@@ -1,7 +1,9 @@
 """Dialogs of the stock tabs and `StockPrompts`, the object the StockController talks to.
 
 Tests replace StockPrompts with a fake, so no dialog ever blocks a test."""
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QPixmap
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QHBoxLayout,
     QHeaderView, QInputDialog, QLabel, QMessageBox, QPushButton, QSpinBox, QTableWidget,
@@ -163,10 +165,29 @@ class ImportNoticeDialog(QDialog):
         self.accept() if action != "cancel" else self.reject()
 
 
+class _NetworkFetcher:
+    """Downloads a product image without blocking the window."""
+
+    def __init__(self, parent):
+        self._manager = QNetworkAccessManager(parent)
+
+    def fetch(self, url: str, done) -> None:
+        reply = self._manager.get(QNetworkRequest(QUrl(url)))
+
+        def finished():
+            data = bytes(reply.readAll()) if reply.error() == reply.NetworkError.NoError else None
+            reply.deleteLater()
+            done(data)
+
+        reply.finished.connect(finished)
+
+
 class ValidationDialog(QDialog):
     """Items without a recognizable color/size, grouped by SKU, before the futuro is computed."""
 
-    def __init__(self, lines, colors, sizes, parent=None):
+    IMAGE_SIZE = 56
+
+    def __init__(self, lines, colors, sizes, parent=None, image_fetcher=None):
         super().__init__(parent)
         self.setObjectName("stockValidationDialog")
         self.setWindowTitle("Validar itens da planilha")
@@ -174,23 +195,36 @@ class ValidationDialog(QDialog):
         self.lines = list(lines)
         self._colors, self._sizes = list(colors), list(sizes)
         layout = QVBoxLayout(self)
-        intro = QLabel("Alguns itens não tiveram a cor (ou o tamanho) identificada. Escolha "
-                       "abaixo; o que ficar pendente fica fora da conta do futuro.")
+        intro = QLabel("Alguns itens não tiveram a cor identificada. Escolha a cor abaixo; "
+                       "o que ficar pendente fica fora da conta do futuro.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
-        headers = ("ANÚNCIO", "SKU", "VARIAÇÃO", "TAM.", "CAMISETAS", "COR", "TAMANHO 1",
+        headers = ("IMAGEM", "ANÚNCIO", "SKU", "VARIAÇÃO", "CAMISETAS", "COR", "TAMANHO 1",
                    "TAMANHO 2 (KIT)", "LEMBRAR SKU", "")
         self.table = QTableWidget(len(self.lines), len(headers))
         self.table.setObjectName("validationTable")
         self.table.setHorizontalHeaderLabels(headers)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().hide()
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, self.IMAGE_SIZE + 16)
+        header.setSectionResizeMode(9, QHeaderView.ResizeMode.ResizeToContents)
+        self._fetch = image_fetcher or _NetworkFetcher(self).fetch
+        self._pictures = {}
+        self.image_labels = []
         self.color_boxes, self.size_boxes, self.remember_boxes, self.apply_buttons = [], [], [], []
         for row, line in enumerate(self.lines):
+            picture = QLabel("sem imagem")
+            picture.setObjectName("productImagePlaceholder")
+            picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            picture.setFixedSize(self.IMAGE_SIZE, self.IMAGE_SIZE)
+            self.image_labels.append(picture)
+            self.table.setCellWidget(row, 0, picture)
+            self._load_picture(row, line.image_url)
             for column, text in enumerate((line.product_name, line.sku or "(sem SKU)",
-                                           line.variation or "—", line.sizes_text or "—",
-                                           line.shirts)):
+                                           line.variation or "—", line.shirts), start=1):
                 self.table.setItem(row, column, _item(text))
             color = self._combo(self._color_items(), enabled=line.needs_color)
             color.activated.connect(lambda _i, r=row: self._color_chosen(r))
@@ -216,11 +250,16 @@ class ValidationDialog(QDialog):
             holder_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             holder_layout.addWidget(remember)
             self.table.setCellWidget(row, 8, holder)
-            apply_button = QPushButton("Aplicar a todos os iguais")
+            apply_button = QPushButton("Aplicar aos iguais")
+            apply_button.setToolTip("Usa esta cor em todas as linhas do mesmo SKU.")
             apply_button.clicked.connect(lambda _c=False, r=row: self.apply_to_equals(r))
             self.apply_buttons.append(apply_button)
             self.table.setCellWidget(row, 9, apply_button)
-            self.table.setRowHeight(row, 40)
+            self.table.setRowHeight(row, self.IMAGE_SIZE + 10)
+        # sizes are only asked for when a line has no readable size
+        needs_size = any(line.needs_size for line in self.lines)
+        self.table.setColumnHidden(6, not needs_size)
+        self.table.setColumnHidden(7, not needs_size)
         layout.addWidget(self.table, 1)
         self.status = QLabel()
         self.status.setObjectName("muted")
@@ -238,6 +277,30 @@ class ValidationDialog(QDialog):
             buttons.addWidget(button)
         layout.addLayout(buttons)
         self._update_buttons()
+
+    # ---- product image -------------------------------------------------------------
+    def _load_picture(self, row: int, url: str) -> None:
+        if not url or not url.lower().startswith(("http://", "https://")):
+            return
+        if url in self._pictures:
+            self._show_picture(row, self._pictures[url])
+            return
+        self._fetch(url, lambda data, r=row, u=url: self._picture_ready(r, u, data))
+
+    def _picture_ready(self, row: int, url: str, data) -> None:
+        pixmap = QPixmap()
+        if data and pixmap.loadFromData(data):
+            self._pictures[url] = pixmap
+            self._show_picture(row, pixmap)
+
+    def _show_picture(self, row: int, pixmap) -> None:
+        try:
+            label = self.image_labels[row]
+            label.setPixmap(pixmap.scaled(
+                self.IMAGE_SIZE, self.IMAGE_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation))
+        except RuntimeError:        # the dialog was closed before the image arrived
+            pass
 
     # ---- combos ------------------------------------------------------------------
     def _combo(self, items, enabled: bool) -> QComboBox:
@@ -333,7 +396,8 @@ class FinalizeDialog(QDialog):
         self.setWindowTitle("Finalizar pedido")
         self.resize(640, 480)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Isto desconta do estoque as camisetas do futuro e zera o futuro:"))
+        layout.addWidget(QLabel(
+            "Isto desconta do estoque as camisetas e as estampas do futuro e zera o futuro:"))
         table = _read_only_table("finalizeTable",
                                  ("COR", "TAM.", "FUTURO", "ESTOQUE", "DEPOIS", "FALTAM"))
         table.setRowCount(len(summary.rows))
@@ -342,7 +406,25 @@ class FinalizeDialog(QDialog):
                                             entry.after, entry.shortage)):
                 table.setItem(row, column, _item(value))
         layout.addWidget(table, 1)
+        self.art_table = None
+        if summary.arts:
+            layout.addWidget(QLabel("Estampas:"))
+            self.art_table = _read_only_table(
+                "finalizeArtTable", ("ARQUIVO", "FUTURO", "ESTOQUE", "DEPOIS", "FALTAM"))
+            self.art_table.setRowCount(len(summary.arts))
+            for row, entry in enumerate(summary.arts):
+                for column, value in enumerate((entry.name, entry.future, entry.stock,
+                                                entry.after, entry.shortage)):
+                    self.art_table.setItem(row, column, _item(value))
+            layout.addWidget(self.art_table, 1)
         self.acknowledge = None
+        if summary.art_shortages:
+            names = ", ".join(f"{r.name} (faltam {r.shortage})" for r in summary.art_shortages)
+            label = QLabel(f"Estampas com estoque insuficiente: {names}. O estoque ficará em 0 "
+                           "nesses itens e a falta será registrada no histórico.")
+            label.setObjectName("pendingWarning")
+            label.setWordWrap(True)
+            layout.addWidget(label)
         if summary.shortages:
             names = ", ".join(f"{r.color} {r.size} (faltam {r.shortage})"
                               for r in summary.shortages)
@@ -396,7 +478,8 @@ class StockHistoryDialog(QDialog):
         self.filter.currentIndexChanged.connect(self._fill_movements)
         page_layout.addWidget(self.filter)
         self.movements_table = _read_only_table(
-            "movementsTable", ("DATA", "TIPO", "COR", "TAM.", "QTD.", "ANTES", "DEPOIS", "OBS."))
+            "movementsTable", ("DATA", "PRODUTO", "TIPO", "COR / ARQUIVO", "TAM.", "QTD.", "ANTES",
+                               "DEPOIS", "OBS."))
         page_layout.addWidget(self.movements_table)
         tabs.addTab(page, "Movimentos")
         self.imports_table = _read_only_table(
@@ -423,82 +506,110 @@ class StockHistoryDialog(QDialog):
             kind_text = MOVEMENT_LABELS.get(move.kind, move.kind)
             if move.scope == "futuro":
                 kind_text += " (futuro)"
-            for column, value in enumerate((date_time(move.at), kind_text, move.color, move.size,
-                                            quantity, move.before, move.after, move.note)):
+            product = "Estampa" if move.produto == "estampa" else "Camiseta"
+            for column, value in enumerate((date_time(move.at), product, kind_text, move.color,
+                                            move.size, quantity, move.before, move.after,
+                                            move.note)):
                 table.setItem(row, column, _item(value))
 
 
-class AliasesDialog(QDialog):
-    """Editable equivalence table: text found in the spreadsheet -> color/size."""
+class MoveArtDialog(QDialog):
+    """Pick the file that holds the stock and the file that should receive it."""
 
-    def __init__(self, colors, sizes, aliases, parent=None):
+    def __init__(self, sources, targets_for, parent=None):
         super().__init__(parent)
-        self.setObjectName("aliasesDialog")
-        self.setWindowTitle("Equivalências de nomes")
-        self.resize(560, 460)
-        self._colors, self._sizes = list(colors), list(sizes)
+        self.setObjectName("moveArtDialog")
+        self.setWindowTitle("Mover estoque para outro arquivo")
+        self.resize(560, 220)
+        self._targets_for = targets_for
         layout = QVBoxLayout(self)
-        note = QLabel("Nomes escritos de outra forma na planilha (ex.: \"preto\" = Preta). "
-                      "Maiúsculas, acentos e espaços extras são ignorados.")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-        self.table = QTableWidget(0, 3)
-        self.table.setObjectName("aliasesTable")
-        self.table.setHorizontalHeaderLabels(("TIPO", "TEXTO NA PLANILHA", "EQUIVALE A"))
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table.verticalHeader().hide()
+        layout.addWidget(QLabel("Todo o estoque do arquivo de origem passa para o de destino "
+                                "(renomeações e trocas de pasta):"))
+        layout.addWidget(QLabel("De (arquivos com estoque):"))
+        self.source = QComboBox()
+        for file in sources:
+            self.source.addItem(file.relative_path + ("  (não encontrado)" if file.missing else ""),
+                                file.id)
+        layout.addWidget(self.source)
+        layout.addWidget(QLabel("Para (arquivos da pasta):"))
+        self.target = QComboBox()
+        layout.addWidget(self.target)
+        self.source.currentIndexChanged.connect(self._fill_targets)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        cancel = QPushButton("Cancelar")
+        cancel.clicked.connect(self.reject)
+        self.confirm_button = QPushButton("Mover estoque")
+        self.confirm_button.setObjectName("primaryButton")
+        self.confirm_button.clicked.connect(self._confirm)
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.confirm_button)
+        layout.addLayout(buttons)
+        self._fill_targets()
+
+    def _fill_targets(self) -> None:
+        self.target.clear()
+        source_id = self.source.currentData()
+        for file in self._targets_for(source_id):
+            self.target.addItem(file.relative_path, file.id)
+        self.confirm_button.setEnabled(self.target.count() > 0)
+
+    def choice(self):
+        return self.source.currentData(), self.target.currentData()
+
+    def _confirm(self) -> None:
+        answer = QMessageBox.question(
+            self, "Confirmar",
+            f"Mover o estoque de [{self.source.currentText()}] para "
+            f"[{self.target.currentText()}]?")
+        if answer == QMessageBox.StandardButton.Yes:
+            self.accept()
+
+
+class MatchesDialog(QDialog):
+    """Suggested pairs (vanished file -> same name in the folder). Nothing moves until the user
+    confirms: one by one (tick the rows) or all of them."""
+
+    def __init__(self, suggestions, parent=None):
+        super().__init__(parent)
+        self.setObjectName("artMatchesDialog")
+        self.setWindowTitle("Sugerir correspondências")
+        self.resize(760, 420)
+        self.suggestions = list(suggestions)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Arquivos que sumiram da pasta e têm estoque, e o arquivo de mesmo "
+                                "nome que existe agora. Marque o que deve ser movido:"))
+        self.table = _read_only_table("artMatchesTable", ("MOVER", "DE (SUMIU)", "PARA", "ESTOQUE"))
+        self.table.setRowCount(len(self.suggestions))
+        for row, match in enumerate(self.suggestions):
+            check = QTableWidgetItem()
+            check.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            check.setCheckState(Qt.CheckState.Unchecked)
+            self.table.setItem(row, 0, check)
+            for column, value in enumerate((match.from_path, match.to_path, match.stock), start=1):
+                self.table.setItem(row, column, _item(value))
         layout.addWidget(self.table, 1)
-        for kind, text, target in aliases:
-            self.add_row(kind, text, target)
-        row = QHBoxLayout()
-        add = QPushButton("Adicionar")
-        add.clicked.connect(lambda: self.add_row("color", "", None))
-        remove = QPushButton("Remover selecionada")
-        remove.clicked.connect(self._remove)
-        row.addWidget(add)
-        row.addWidget(remove)
-        row.addStretch()
-        layout.addLayout(row)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
-                                   | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        buttons = QHBoxLayout()
+        self.all_button = QPushButton("Marcar todos")
+        self.all_button.clicked.connect(self.mark_all)
+        buttons.addWidget(self.all_button)
+        buttons.addStretch()
+        cancel = QPushButton("Cancelar")
+        cancel.clicked.connect(self.reject)
+        self.confirm_button = QPushButton("Mover marcados")
+        self.confirm_button.setObjectName("primaryButton")
+        self.confirm_button.clicked.connect(self.accept)
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.confirm_button)
+        layout.addLayout(buttons)
 
-    def add_row(self, kind: str, text: str, target) -> None:
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        kind_box = QComboBox()
-        kind_box.addItem("Cor", "color")
-        kind_box.addItem("Tamanho", "size")
-        kind_box.setCurrentIndex(0 if kind == "color" else 1)
-        self.table.setCellWidget(row, 0, kind_box)
-        self.table.setItem(row, 1, _item(text))
-        target_box = QComboBox()
-        self.table.setCellWidget(row, 2, target_box)
-        kind_box.currentIndexChanged.connect(lambda _i, b=kind_box, t=target_box: self._targets(b, t))
-        self._targets(kind_box, target_box, target)
-
-    def _targets(self, kind_box, target_box, selected=None) -> None:
-        target_box.clear()
-        options = self._colors if kind_box.currentData() == "color" else self._sizes
-        for option in options:
-            target_box.addItem(option.name, option.id)
-        if selected is not None:
-            target_box.setCurrentIndex(max(0, target_box.findData(selected)))
-
-    def _remove(self) -> None:
-        row = self.table.currentRow()
-        if row >= 0:
-            self.table.removeRow(row)
-
-    def rows(self):
-        result = []
+    def mark_all(self) -> None:
         for row in range(self.table.rowCount()):
-            text = self.table.item(row, 1).text() if self.table.item(row, 1) else ""
-            result.append((self.table.cellWidget(row, 0).currentData(), text,
-                           self.table.cellWidget(row, 2).currentData()))
-        return result
+            self.table.item(row, 0).setCheckState(Qt.CheckState.Checked)
+
+    def chosen(self):
+        return [match for row, match in enumerate(self.suggestions)
+                if self.table.item(row, 0).checkState() == Qt.CheckState.Checked]
 
 
 class StockPrompts:
@@ -510,6 +621,23 @@ class StockPrompts:
     def ask_name(self, title: str, label: str) -> str | None:
         text, ok = QInputDialog.getText(self.parent, title, label)
         return text if ok else None
+
+    def choose_color(self, colors):
+        names = [c.name for c in colors]
+        if not names:
+            return None
+        name, ok = QInputDialog.getItem(self.parent, "Excluir cor", "Qual cor excluir?",
+                                        names, 0, False)
+        return colors[names.index(name)].id if ok else None
+
+    def confirm_delete_color(self, name: str, stock: int, future: int) -> bool:
+        text = f"Excluir a cor \"{name}\"?"
+        if stock or future:
+            text += (f"\n\nEla tem {stock} camiseta(s) em estoque e {future} no futuro. "
+                     "Esses números serão descartados (ficam registrados no histórico).")
+        text += "\n\nVocê pode cadastrar a cor de novo depois."
+        answer = QMessageBox.question(self.parent, "Excluir cor", text)
+        return answer == QMessageBox.StandardButton.Yes
 
     def info(self, title: str, text: str) -> None:
         QMessageBox.information(self.parent, title, text)
@@ -534,14 +662,20 @@ class StockPrompts:
             return None
         return dialog.decisions()
 
+    def choose_art_move(self, sources, targets_for):
+        dialog = MoveArtDialog(sources, targets_for, self.parent)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialog.choice()
+
+    def confirm_art_matches(self, suggestions):
+        dialog = MatchesDialog(suggestions, self.parent)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return []
+        return dialog.chosen()
+
     def confirm_finalize(self, summary) -> bool:
         return FinalizeDialog(summary, self.parent).exec() == QDialog.DialogCode.Accepted
 
     def show_history(self, movements, imports) -> None:
         StockHistoryDialog(movements, imports, self.parent).exec()
-
-    def edit_aliases(self, colors, sizes, aliases):
-        dialog = AliasesDialog(colors, sizes, aliases, self.parent)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return None
-        return dialog.rows()

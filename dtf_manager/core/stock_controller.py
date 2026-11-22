@@ -4,7 +4,6 @@ import hashlib
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtGui import QGuiApplication
 
 from dtf_manager.models.stock import ImportDecision, ImportNotice, NoticeChoice
 from dtf_manager.services.stock_service import StockError, StockService
@@ -30,27 +29,36 @@ class StockController(QObject):
         self.tab = tab
         self._mounted_lookup = mounted_lookup or (lambda numbers: set())
         self._busy = False
+        self.arts = None                 # ArtStockController, set by the window when it exists
         if tab is not None:
             tab.new_color_requested.connect(self.new_color)
             tab.new_size_requested.connect(self.new_size)
+            tab.delete_color_requested.connect(self.delete_color)
             tab.bulk_requested.connect(self.bulk_add)
-            tab.aliases_requested.connect(self.edit_aliases)
             tab.history_requested.connect(self.show_history)
-            tab.copy_missing_requested.connect(self.copy_missing)
             tab.stock_edit_requested.connect(self.edit_stock)
             tab.separated_changed.connect(self.service.set_separated)
         self.refresh()
 
     # ---- view -----------------------------------------------------------------------
     @property
+    def art_service(self):
+        return self.arts.service if self.arts is not None else None
+
+    @property
     def has_future(self) -> bool:
-        return self.service.snapshot().has_future
+        """A futuro to finalize: shirts or arts."""
+        return self.service.snapshot().has_future or (
+            self.arts is not None and self.arts.has_future)
 
     def refresh(self) -> None:
         snapshot = self.service.snapshot()
         if self.tab is not None:
             self.tab.render(snapshot)
-        self.changed.emit(snapshot.has_future)
+        if self.arts is not None:
+            self.arts.refresh()
+        self.changed.emit(snapshot.has_future or (
+            self.arts is not None and self.arts.has_future))
 
     def _try(self, action, *args):
         """Runs a service call; the message of a StockError is shown to the user."""
@@ -77,14 +85,24 @@ class StockController(QObject):
         if ok:
             self.refresh()
 
-    def edit_aliases(self) -> None:
+    def delete_color(self, color_id: int = -1) -> bool:
+        """Removes a color. color_id -1 = ask which one. Always asks for confirmation and says
+        what will be discarded."""
         snapshot = self.service.snapshot()
-        rows = self.prompts.edit_aliases(snapshot.colors, snapshot.sizes,
-                                         self.service.repository.aliases())
-        if rows is None:
-            return
-        self.service.replace_aliases(rows)
+        if color_id < 0:
+            color_id = self.prompts.choose_color(snapshot.colors)
+            if color_id is None:
+                return False
+        preview, ok = self._try(self.service.preview_delete_color, color_id)
+        if not ok:
+            self.refresh()
+            return False
+        name, stock, future = preview
+        if not self.prompts.confirm_delete_color(name, stock, future):
+            return False
+        _, ok = self._try(self.service.delete_color, color_id)
         self.refresh()
+        return ok
 
     # ---- stock ------------------------------------------------------------------------
     def edit_stock(self, color_id: int, size_id: int, text: str) -> None:
@@ -102,22 +120,6 @@ class StockController(QObject):
         if ok:
             self.refresh()
             self.prompts.info("Estoque em massa", f"Estoque atualizado em {count} combinação(ões).")
-
-    def copy_missing(self) -> None:
-        text = self.missing_text()
-        if not text:
-            self.prompts.info("Lista de compra", "Não falta nenhuma camiseta.")
-            return
-        QGuiApplication.clipboard().setText(text)
-        self.prompts.info("Lista de compra", "Lista copiada. É só colar onde precisar.")
-
-    def missing_text(self) -> str:
-        rows = [r for r in self.service.snapshot().separation if r.missing > 0]
-        if not rows:
-            return ""
-        lines = ["Faltam comprar:"] + [f"{r.color} {r.size}: {r.missing}" for r in rows]
-        lines.append(f"Total: {sum(r.missing for r in rows)}")
-        return "\n".join(lines)
 
     def show_history(self) -> None:
         self.prompts.show_history(self.service.movements(), self.service.imports())
@@ -174,6 +176,8 @@ class StockController(QObject):
             if decisions is None:
                 return False
         result = self.service.commit_import(prep, decisions, file_name, file_hash)
+        if self.arts is not None:
+            self.arts.recalculate(reset_marks=True)      # a new import replaces the arts futuro
         self.refresh()
         notes = []
         if result.pending:
@@ -185,6 +189,14 @@ class StockController(QObject):
         if notes:
             self.prompts.info("Estoque: importação", "\n".join(notes))
         return True
+
+    def cancel_import(self) -> bool:
+        """The operation was cancelled: forget its futuro and its import record."""
+        done = self.service.cancel_current_import(self.art_service)
+        if self.arts is not None:
+            self.arts.clear_manual()
+        self.refresh()
+        return done
 
     # ---- finalize ----------------------------------------------------------------------
     @property
@@ -199,12 +211,14 @@ class StockController(QObject):
         self.changed.emit(False)                 # disables the button during the operation
         done = False
         try:
-            summary = self.service.finalize_summary()
+            summary = self.service.finalize_summary(self.art_service)
             if summary is None:
                 return False
             if not self.prompts.confirm_finalize(summary):
                 return False
-            done = self.service.finalize() is not None
+            done = self.service.finalize(self.art_service) is not None
+            if done and self.arts is not None:
+                self.arts.clear_manual()
             return done
         finally:
             self._busy = False

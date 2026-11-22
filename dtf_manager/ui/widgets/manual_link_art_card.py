@@ -23,7 +23,7 @@ def transparent_preview(path: str, width: int = 180, height: int = 130, color_mo
     square = 12
     for y in range(0, height, square):
         for x in range(0, width, square):
-            painter.fillRect(x, y, square, square, QColor("#2a2627" if (x // square + y // square) % 2 else "#171415"))
+            painter.fillRect(x, y, square, square, QColor("#241a20" if (x // square + y // square) % 2 else "#14100f"))
     source = _recolor(QPixmap(path), color_mode)
     if not source.isNull():
         scaled = source.scaled(width - 10, height - 10, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)

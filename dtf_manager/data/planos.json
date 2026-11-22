@@ -1,10 +1,10 @@
 {
-  "exemplo": true,
-  "aviso": "VALORES DE EXEMPLO. Troque os precos abaixo e mude \"exemplo\" para false. Para usar outro arquivo sem recompilar, defina DTF_PLANS_FILE.",
+  "exemplo": false,
+  "aviso": "Precos de venda. Para mudar, edite aqui, suba APP_VERSION e gere um novo instalador. Para usar outro arquivo sem recompilar, defina DTF_PLANS_FILE.",
   "planos": [
-    {"codigo": "MENSAL", "nome": "Mensal", "duracao": "1 mês", "preco": "R$ 49,90"},
-    {"codigo": "SEMESTRAL", "nome": "Semestral", "duracao": "6 meses", "preco": "R$ 249,90"},
-    {"codigo": "ANUAL", "nome": "Anual", "duracao": "12 meses", "preco": "R$ 449,90", "destaque": "Mais vantajoso"},
-    {"codigo": "VITALICIO", "nome": "Vitalício", "duracao": "Sem expiração", "preco": "R$ 1.299,00"}
+    {"codigo": "MENSAL", "nome": "Mensal", "duracao": "1 mês", "preco": "R$ 79,90"},
+    {"codigo": "SEMESTRAL", "nome": "Semestral", "duracao": "6 meses", "preco": "R$ 399,90"},
+    {"codigo": "ANUAL", "nome": "Anual", "duracao": "12 meses", "preco": "R$ 699,90", "destaque": "Mais vantajoso"},
+    {"codigo": "VITALICIO", "nome": "Vitalício", "duracao": "Sem expiração", "preco": "R$ 1.599,90"}
   ]
 }

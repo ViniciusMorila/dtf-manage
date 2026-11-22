@@ -5,7 +5,9 @@ import unittest
 from pathlib import Path
 
 from dtf_manager.models.stock import LineDecision
-from dtf_manager.services.sqlite_database import DTFDatabase, STOCK_BACKUP_SUFFIX
+from dtf_manager.services.sqlite_database import (
+    ART_STOCK_BACKUP_SUFFIX, DTFDatabase, STOCK_BACKUP_SUFFIX,
+)
 from dtf_manager.services.stock_parser import parse_variation
 from dtf_manager.services.stock_service import StockError
 from tests.stock_fakes import (
@@ -101,6 +103,84 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(len(reopened.movements()), 1)
 
 
+class DeleteColorTests(unittest.TestCase):
+    def setUp(self):
+        self.service, self.path = make_service()
+        self.colors, self.sizes = ids(self.service)
+
+    def test_deleting_a_color_removes_its_stock_future_and_mappings_but_keeps_history(self):
+        green = self.service.add_color("Verde").id
+        self.service.set_stock(green, self.sizes["M"], "6")
+        do_import(self.service, [make_order("A", ("Verde,M", 2), ("Preta,G", 1))])
+        self.assertEqual(self.service.preview_delete_color(green), ("Verde", 6, 2))
+        self.service.replace_aliases([("color", "esmeralda", green), ("color", "negro", self.colors["Preta"])])
+        self.service.repository.set_sku_color("sku-v", green)
+        self.assertEqual(self.service.delete_color(green), ("Verde", 6, 2))
+        snap = self.service.snapshot()
+        self.assertNotIn("Verde", [c.name for c in snap.colors])
+        self.assertNotIn(green, [k[0] for k in snap.stock])
+        self.assertNotIn(green, [k[0] for k in snap.future])
+        self.assertEqual(future_of(self.service, "Preta", "G"), 1)           # others untouched
+        self.assertEqual([a[1] for a in self.service.repository.aliases() if a[2] == green], [])
+        self.assertIn("negro", [a[1] for a in self.service.repository.aliases()])
+        self.assertEqual(self.service.repository.sku_colors(), {})
+        notes = [(m.kind, m.scope, m.color, m.before, m.after, m.note) for m in self.service.movements()
+                 if m.note == "Cor excluída"]
+        self.assertIn(("ajuste_manual", "estoque", "Verde", 6, 0, "Cor excluída"), notes)
+        self.assertIn(("importacao", "futuro", "Verde", 2, 0, "Cor excluída"), notes)
+        self.assertTrue(any(m.color == "Verde" for m in self.service.movements()))   # history kept
+
+    def test_the_name_can_be_registered_again_and_the_total_still_balances(self):
+        green = self.service.add_color("Verde").id
+        self.service.delete_color(green)
+        again = self.service.add_color("verde")
+        self.assertEqual(stock_of(self.service, "verde", "P"), 0)
+        self.assertNotEqual(again.id, green)
+
+    def test_a_color_that_no_longer_exists_is_refused_and_survives_reopening(self):
+        green = self.service.add_color("Verde").id
+        self.service.delete_color(green)
+        with self.assertRaises(StockError):
+            self.service.delete_color(green)
+        reopened, _ = make_service(self.path)
+        self.assertNotIn("Verde", [c.name for c in reopened.snapshot().colors])
+
+    def test_imports_after_deleting_ask_about_that_color_again(self):
+        green = self.service.add_color("Verde").id
+        self.service.delete_color(green)
+        prep = self.service.prepare_import([make_order("A", ("Verde,M", 1, "S-V"))])
+        self.assertEqual(len(prep.lines), 1)
+
+
+class CancelImportTests(unittest.TestCase):
+    def setUp(self):
+        self.service, _ = make_service()
+        self.service.bulk_add(10)
+
+    def test_cancelling_drops_the_future_and_lets_the_same_file_come_back_clean(self):
+        orders = [make_order("A", ("Preta,G", 3), ("P - M", 1, "S"))]
+        do_import(self.service, orders, file_hash="h")
+        self.assertTrue(self.service.cancel_current_import())
+        snap = self.service.snapshot()
+        self.assertFalse(snap.has_future)
+        self.assertEqual(snap.pending, ())
+        self.assertEqual(stock_of(self.service, "Preta", "G"), 10)        # stock untouched
+        self.assertIsNone(self.service.check_duplicate("h", ["A"]))        # no "already imported"
+        self.assertEqual(self.service.imports(), [])
+        do_import(self.service, orders, file_hash="h")                      # from zero again
+        self.assertEqual(future_of(self.service, "Preta", "G"), 3)
+        notes = [m.note for m in self.service.movements() if m.scope == "futuro"]
+        self.assertIn("Operação cancelada", notes)
+
+    def test_nothing_to_cancel_without_an_import_or_after_finalizing(self):
+        self.assertFalse(self.service.cancel_current_import())
+        do_import(self.service, [make_order("A", ("Preta,G", 3))], file_hash="h")
+        self.service.finalize()
+        self.assertFalse(self.service.cancel_current_import())             # stays protected
+        self.assertIsNotNone(self.service.check_duplicate("h", ["A"]))
+        self.assertEqual(stock_of(self.service, "Preta", "G"), 7)
+
+
 class BackupTests(unittest.TestCase):
     def test_existing_database_is_copied_once_before_the_stock_migration(self):
         folder = Path(tempfile.mkdtemp())
@@ -123,10 +203,50 @@ class BackupTests(unittest.TestCase):
         DTFDatabase(path)                                  # second start: no new copy
         self.assertEqual(backup.stat().st_mtime_ns, stamp)
 
+    def test_art_stock_migration_gets_its_own_copy_and_adds_the_produto_column(self):
+        folder = Path(tempfile.mkdtemp())
+        path = folder / "dtf_manager.db"
+        legacy = sqlite3.connect(path)               # a database from the shirt-stock version
+        legacy.executescript("""
+            CREATE TABLE schema_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE stock_colors(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+                                      norm TEXT NOT NULL UNIQUE);
+            CREATE TABLE stock_movements(id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL,
+                kind TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'estoque', color TEXT NOT NULL,
+                size TEXT NOT NULL, quantity INTEGER NOT NULL, before INTEGER NOT NULL,
+                after INTEGER NOT NULL, note TEXT NOT NULL DEFAULT '');
+            INSERT INTO stock_colors(name, norm) VALUES('Preta', 'preta');
+            INSERT INTO stock_movements(at,kind,scope,color,size,quantity,before,after)
+                VALUES('2026-11-20T10:00:00','ajuste_manual','estoque','Preta','M',3,0,3);
+        """)
+        legacy.commit()
+        legacy.close()
+        DTFDatabase(path)
+        backup = folder / (path.name + ART_STOCK_BACKUP_SUFFIX)
+        self.assertTrue(backup.exists())
+        copy = sqlite3.connect(backup)
+        names = {r[0] for r in copy.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertNotIn("stock_art_files", names)                 # the copy is the old state
+        self.assertEqual(copy.execute("SELECT COUNT(*) FROM stock_movements").fetchone()[0], 1)
+        columns = {r[1] for r in copy.execute("PRAGMA table_info(stock_movements)")}
+        self.assertNotIn("produto", columns)
+        copy.close()
+        migrated = sqlite3.connect(path)
+        self.assertIn("produto", {r[1] for r in migrated.execute("PRAGMA table_info(stock_movements)")})
+        self.assertEqual(migrated.execute("SELECT produto FROM stock_movements").fetchone()[0], "camiseta")
+        names = {r[0] for r in migrated.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertTrue({"stock_art_files", "stock_art_levels", "stock_art_future",
+                         "stock_art_hashes"} <= names)
+        migrated.close()
+        stamp = backup.stat().st_mtime_ns
+        DTFDatabase(path)                                          # second start: nothing new
+        self.assertEqual(backup.stat().st_mtime_ns, stamp)
+
     def test_new_installation_has_nothing_to_back_up(self):
         folder = Path(tempfile.mkdtemp())
         DTFDatabase(folder / "dtf_manager.db")
         self.assertFalse((folder / ("dtf_manager.db" + STOCK_BACKUP_SUFFIX)).exists())
+        self.assertFalse((folder / ("dtf_manager.db" + ART_STOCK_BACKUP_SUFFIX)).exists())
 
 
 class FutureTests(unittest.TestCase):

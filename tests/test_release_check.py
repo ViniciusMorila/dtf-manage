@@ -142,13 +142,9 @@ class ReleaseProblemsTests(unittest.TestCase):
                                      "DTF_SUPPORT_CONTACT": "dev@example.com"}):
             self.assertTrue(self.problems({"whatsapp_numero": "", "contato_suporte": ""}))
 
-    def test_shipped_defaults_are_blocked_until_the_owner_fills_them(self):
-        # The repository ships example values on purpose, so nobody releases them by accident.
-        shipped = json.loads((ROOT / "dtf_manager" / "data" / "app_config.json").read_text(encoding="utf-8"))
-        plans = json.loads((ROOT / "dtf_manager" / "data" / "planos.json").read_text(encoding="utf-8"))
-        self.assertEqual(shipped["whatsapp_numero"], config.EXAMPLE_WHATSAPP)
-        self.assertEqual(shipped["contato_suporte"], "")
-        self.assertIs(plans["exemplo"], True)
+    def test_shipped_files_are_ready_for_release(self):
+        # The files in the repository hold the real number, contact and prices: the gate must pass.
+        self.assertEqual(release_problems(), [])
 
 
 class ReleaseGateCommandTests(unittest.TestCase):

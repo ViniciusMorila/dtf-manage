@@ -54,6 +54,49 @@ def can_build_print_plan(orders: tuple[ImportedOrder, ...] | list[ImportedOrder]
     return bool(items) and all(is_item_print_ready(item) for item in items)
 
 
+def art_copies(item: ImportedOrderItem, art: LinkedArt) -> int:
+    """Copies of one linked art printed for one order item: quantity x copies per product.
+
+    The single formula behind both the roll plan and the art stock."""
+    return item.product_quantity * art.copies_per_product
+
+
+@dataclass(frozen=True, slots=True)
+class CountedArt:
+    file_name: str
+    file_reference: str
+    copies: int
+
+
+@dataclass(frozen=True, slots=True)
+class ArtCopyCount:
+    arts: dict                 # normalized file path -> CountedArt (summed over dimensions)
+    unlinked_items: int        # items left out because they have no valid art link
+    item_count: int
+
+
+def count_art_copies(orders: tuple[ImportedOrder, ...] | list[ImportedOrder]) -> ArtCopyCount:
+    """Copies per art FILE, with the same formula as build_dtf_print_plan but tolerant: items
+    without a valid link are skipped (and counted) instead of raising. The roll keeps the same
+    file at different sizes apart; the stock sums them, since it is the same physical art."""
+    totals: dict[str, CountedArt] = {}
+    unlinked = items = 0
+    for order in orders:
+        for item in order.items:
+            items += 1
+            if not is_item_print_ready(item):
+                unlinked += 1
+                continue
+            for art in item.linked_arts:
+                path = Path(art.file_reference or "").resolve()
+                key = str(path).casefold()
+                current = totals.get(key)
+                copies = art_copies(item, art) + (current.copies if current else 0)
+                totals[key] = CountedArt(current.file_name if current else art.file_name,
+                                         str(path), copies)
+    return ArtCopyCount(totals, unlinked, items)
+
+
 def _validate_art_file(item: ImportedOrderItem, art: LinkedArt) -> Path:
     if not art.file_reference:
         raise PrintPlanValidationError(
@@ -91,7 +134,7 @@ def build_dtf_print_plan(
                     raise PrintPlanValidationError(
                         f'A quantidade da arte "{art.file_name}" é inválida.'
                     )
-                final_copies = item.product_quantity * art.copies_per_product
+                final_copies = art_copies(item, art)
                 if not _positive_integer(final_copies):
                     raise PrintPlanValidationError(
                         f'Não foi possível calcular a quantidade da arte "{art.file_name}".'

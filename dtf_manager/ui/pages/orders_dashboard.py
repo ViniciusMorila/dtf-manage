@@ -1,4 +1,4 @@
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -16,6 +16,9 @@ from dtf_manager.state.order_import_state import OrderImportState
 from dtf_manager.state.order_selectors import ItemLinkFilter, filter_order_items, get_import_metrics
 from dtf_manager.ui.widgets.order_items_table import OrderItemsTable
 from dtf_manager.services.print_plan_service import can_build_print_plan
+
+
+ACTION_BLOCK_WIDTH = 480
 
 
 class OrdersDashboard(QWidget):
@@ -57,15 +60,6 @@ class OrdersDashboard(QWidget):
         heading.addWidget(subtitle)
         header.addLayout(heading)
         header.addStretch()
-        reimport = QPushButton("IMPORTAR OUTRA PLANILHA")
-        reimport.clicked.connect(self.import_requested)
-        header.addWidget(reimport)
-        automatic = QPushButton("VINCULAR AUTOMATICAMENTE")
-        self.automatic_link_button = automatic
-        automatic.setObjectName("primaryButton")
-        automatic.setToolTip("Selecionar a pasta e vincular artes por memória e correspondências seguras.")
-        automatic.clicked.connect(self.automatic_link_requested)
-        header.addWidget(automatic)
         layout.addLayout(header)
 
         cards = QHBoxLayout()
@@ -123,21 +117,42 @@ class OrdersDashboard(QWidget):
         self.empty_import.setObjectName("primaryButton")
         self.empty_import.clicked.connect(self.import_requested)
         layout.addWidget(self.empty_import)
+        self.build_hint = QLabel("Vincule todos os produtos para montar o pedido.")
+        self.build_hint.setObjectName("muted")
+        self.build_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.build_hint)
+        self.automatic_link_button = QPushButton("VINCULAR AUTOMATICAMENTE")
+        self.automatic_link_button.setObjectName("primaryButton")
+        self.automatic_link_button.setToolTip(
+            "Selecionar a pasta e vincular artes por memória e correspondências seguras.")
+        self.automatic_link_button.clicked.connect(self.automatic_link_requested)
         self.manual_link_button = QPushButton("VINCULAR MANUALMENTE")
         self.manual_link_button.setObjectName("primaryButton")
         self.manual_link_button.clicked.connect(
             lambda: self.manual_link_requested.emit()
         )
-        layout.addWidget(self.manual_link_button)
-        self.build_hint = QLabel("Vincule todos os produtos para montar o pedido.")
-        self.build_hint.setObjectName("muted")
-        layout.addWidget(self.build_hint)
         self.build_order_button = QPushButton("MONTAR PEDIDO")
         self.build_order_button.setObjectName("exportButton")
         self.build_order_button.clicked.connect(
             lambda: self.build_order_requested.emit()
         )
-        layout.addWidget(self.build_order_button)
+        # Bottom block: automatic (left) + manual (right); MONTAR PEDIDO below, as wide as the pair.
+        for button in (self.automatic_link_button, self.manual_link_button, self.build_order_button):
+            button.setProperty("pill", True)
+        self.action_block = QWidget()
+        self.action_block.setFixedWidth(ACTION_BLOCK_WIDTH)
+        block = QGridLayout(self.action_block)
+        block.setContentsMargins(0, 0, 0, 0)
+        block.setHorizontalSpacing(10)
+        block.setVerticalSpacing(10)
+        block.addWidget(self.automatic_link_button, 0, 0)
+        block.addWidget(self.manual_link_button, 0, 1)
+        block.addWidget(self.build_order_button, 1, 0, 1, 2)
+        block_row = QHBoxLayout()
+        block_row.addStretch()
+        block_row.addWidget(self.action_block)
+        block_row.addStretch()
+        layout.addLayout(block_row)
 
     def _set_filter(self, link_filter: ItemLinkFilter) -> None:
         self._active_filter = link_filter

@@ -1,5 +1,6 @@
 """Manual WhatsApp subscription: plan screen, entry points, message and link."""
 import os
+from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
@@ -17,6 +18,7 @@ from tests.test_license_flow import CONTROLLER, LicenseFlowBase
 from tests.test_offline_grace import status as cache_status
 
 NUMBER = "5511999999999"
+EXAMPLE_PLANS = str(Path(__file__).parent / "fixtures" / "planos_exemplo.json")
 
 
 def sent_text(opener):
@@ -27,7 +29,7 @@ def sent_text(opener):
 
 class SubscribeBase(LicenseFlowBase):
     def setUp(self):
-        env = patch.dict(os.environ, {"DTF_WHATSAPP_NUMBER": NUMBER})
+        env = patch.dict(os.environ, {"DTF_WHATSAPP_NUMBER": NUMBER, "DTF_PLANS_FILE": EXAMPLE_PLANS})
         env.start()
         self.addCleanup(env.stop)
         super().setUp()

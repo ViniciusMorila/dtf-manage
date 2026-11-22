@@ -14,6 +14,8 @@ class ArtworkPanel(QFrame):
     artwork_quantity_changed = Signal(str, int)
     artwork_removed = Signal(str)
     artwork_selection_requested = Signal(str)
+    artwork_locate_requested = Signal(str)
+    manual_copies_changed = Signal(object)    # {file path: copies added by hand}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -31,6 +33,7 @@ class ArtworkPanel(QFrame):
         self.subtitle.setObjectName("muted")
         layout.addWidget(self.subtitle)
         scroll = QScrollArea()
+        self._scroll = scroll
         scroll.setWidgetResizable(True)
         content = QWidget()
         self.cards = QVBoxLayout(content)
@@ -60,6 +63,7 @@ class ArtworkPanel(QFrame):
         width_cm, height_cm = self.physical_size_cm(file_path)
         card = ArtworkCard(file_path.name, "SEM SKU", width_cm, height_cm, 1, file_path)
         card.setProperty("rollKey", roll_key)
+        card.setProperty("manual", True)
         card.dimensions_changed.connect(
             lambda width, height: self._dimensions_changed(roll_key, width, height)
         )
@@ -68,6 +72,7 @@ class ArtworkPanel(QFrame):
         )
         card.remove_requested.connect(self._remove_card)
         card.selection_requested.connect(self._select_card)
+        card.locate_requested.connect(self._locate_card)
         self.cards.addWidget(card)
         self._artwork_cards.append(card)
         self.cards.addStretch()
@@ -75,21 +80,28 @@ class ArtworkPanel(QFrame):
             roll_key, card.width_input.value(), card.height_input.value(), card.quantity_input.value()
         )
         self._update_summary()
+        self._emit_manual_copies()
 
     def add_configured_artwork(
         self, file_path: Path, width_cm: float, height_cm: float, quantity: int,
-        color_mode: str = "original",
+        color_mode: str = "original", manual: bool = False,
     ) -> str:
+        """`manual`: the user added this art by hand; its copies also count in the art stock."""
         roll_key = self._sized_roll_key(file_path, width_cm, height_cm, color_mode)
         existing_card = self._find_card(roll_key)
         if existing_card is not None:
+            if manual and not existing_card.property("manual"):
+                existing_card.setProperty(
+                    "manualExtra", int(existing_card.property("manualExtra") or 0) + quantity)
             existing_card.width_input.setValue(width_cm)
             existing_card.height_input.setValue(height_cm)
             existing_card.quantity_input.setValue(existing_card.quantity_input.value() + quantity)
+            self._emit_manual_copies()
             return roll_key
         self.cards.takeAt(self.cards.count() - 1)
         card = ArtworkCard(file_path.name, "SEM SKU", width_cm, height_cm, quantity, file_path)
         card.setProperty("rollKey", roll_key)
+        card.setProperty("manual", manual)
         card.dimensions_changed.connect(
             lambda width, height: self._dimensions_changed(roll_key, width, height)
         )
@@ -98,11 +110,13 @@ class ArtworkPanel(QFrame):
         )
         card.remove_requested.connect(self._remove_card)
         card.selection_requested.connect(self._select_card)
+        card.locate_requested.connect(self._locate_card)
         self.cards.addWidget(card)
         self._artwork_cards.append(card)
         self.cards.addStretch()
         self.artwork_added.emit(roll_key, width_cm, height_cm, quantity)
         self._update_summary()
+        self._emit_manual_copies()
         return roll_key
 
     def _remove_card(self, card: ArtworkCard) -> None:
@@ -112,6 +126,7 @@ class ArtworkPanel(QFrame):
         if card.file_path:
             self.artwork_removed.emit(str(card.property("rollKey")))
         self._update_summary()
+        self._emit_manual_copies()
 
     def _dimensions_changed(self, roll_key: str, width: float, height: float) -> None:
         self.artwork_dimensions_changed.emit(roll_key, width, height)
@@ -124,6 +139,7 @@ class ArtworkPanel(QFrame):
     def _quantity_changed(self, roll_key: str, quantity: int) -> None:
         self.artwork_quantity_changed.emit(roll_key, quantity)
         self._update_summary()
+        self._emit_manual_copies()
 
     def _find_card(self, roll_key: str) -> ArtworkCard | None:
         return next(
@@ -148,6 +164,50 @@ class ArtworkPanel(QFrame):
         if selected_card.file_path:
             self.artwork_selection_requested.emit(str(selected_card.property("rollKey")))
 
+    def _locate_card(self, card: ArtworkCard) -> None:
+        """Double click on a card: select it and show where its copies are on the roll."""
+        self._select_card(card)
+        if card.file_path:
+            self.artwork_locate_requested.emit(str(card.property("rollKey")))
+
+    def highlight_roll_key(self, roll_key: str) -> None:
+        """The roll selection changed: highlight the matching card (and scroll to it)."""
+        target = None
+        for card in self._artwork_cards:
+            is_target = bool(roll_key) and card.property("rollKey") == roll_key
+            if is_target:
+                target = card
+            if bool(card.property("selected")) != is_target:
+                card.setProperty("selected", is_target)
+                card.style().unpolish(card)
+                card.style().polish(card)
+        if target is not None:
+            self._scroll.ensureWidgetVisible(target)
+
+    # ---- arts added by hand also count in the art stock ----------------------------------------
+    @staticmethod
+    def _manual_copies_of(card: ArtworkCard) -> int:
+        if card.property("manual"):
+            return card.quantity_input.value()
+        return int(card.property("manualExtra") or 0)
+
+    def manual_copies(self) -> dict[str, int]:
+        copies: dict[str, int] = {}
+        for card in self._artwork_cards:
+            amount = self._manual_copies_of(card)
+            if amount > 0 and card.file_path:
+                copies[str(card.file_path)] = copies.get(str(card.file_path), 0) + amount
+        return copies
+
+    def _emit_manual_copies(self) -> None:
+        self.manual_copies_changed.emit(self.manual_copies())
+
+    def clear_manual_flags(self) -> None:
+        """The stock already took these copies (finalized/cancelled): they are no longer 'to deduct'."""
+        for card in self._artwork_cards:
+            card.setProperty("manual", False)
+            card.setProperty("manualExtra", 0)
+
     def set_quantity_from_roll(self, file_path: Path, quantity: int) -> None:
         card = self._find_card(str(file_path))
         if card is None:
@@ -161,6 +221,7 @@ class ArtworkPanel(QFrame):
             card.quantity_input.setValue(quantity)
             card.quantity_input.blockSignals(False)
         self._update_summary()
+        self._emit_manual_copies()
 
     def clear_artworks(self) -> None:
         for card in self._artwork_cards:
@@ -168,6 +229,7 @@ class ArtworkPanel(QFrame):
             card.deleteLater()
         self._artwork_cards.clear()
         self._update_summary()
+        self._emit_manual_copies()
 
     def artwork_entries(self) -> tuple[tuple[Path, float, float, int], ...]:
         return tuple(

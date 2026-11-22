@@ -5,8 +5,9 @@ import sqlite3
 from PySide6.QtCore import QStandardPaths
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 STOCK_BACKUP_SUFFIX = ".antes-do-estoque.bak"
+ART_STOCK_BACKUP_SUFFIX = ".antes-das-estampas.bak"
 
 
 class DTFDatabase:
@@ -65,8 +66,31 @@ class DTFDatabase:
         finally:
             source.close()
 
+    def _backup_before_art_stock_migration(self) -> None:
+        """Second safety copy, before the art-stock tables are added to a database that already
+        has the shirt-stock tables. Once only; an existing copy is never overwritten."""
+        backup = self.path.with_name(self.path.name + ART_STOCK_BACKUP_SUFFIX)
+        if not self.path.exists() or self.path.stat().st_size == 0 or backup.exists():
+            return
+        source = sqlite3.connect(self.path, timeout=10)
+        try:
+            names = {row[0] for row in source.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            if "stock_colors" not in names or "stock_art_files" in names:
+                return
+            temporary = backup.with_name(backup.name + ".tmp")
+            target = sqlite3.connect(temporary)
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+            temporary.replace(backup)
+        finally:
+            source.close()
+
     def _initialize(self) -> None:
         self._backup_before_stock_migration()
+        self._backup_before_art_stock_migration()
         with self.transaction() as db:
             db.executescript(
                 """
@@ -191,12 +215,42 @@ class DTFDatabase:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS stock_art_files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    key TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    absolute_path TEXT NOT NULL,
+                    outside_folder INTEGER NOT NULL DEFAULT 0,
+                    missing INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS stock_art_levels (
+                    art_id INTEGER PRIMARY KEY REFERENCES stock_art_files(id),
+                    quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity >= 0)
+                );
+                CREATE TABLE IF NOT EXISTS stock_art_future (
+                    art_id INTEGER PRIMARY KEY REFERENCES stock_art_files(id),
+                    quantity INTEGER NOT NULL CHECK(quantity > 0),
+                    separated INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE IF NOT EXISTS stock_art_hashes (
+                    path TEXT PRIMARY KEY,
+                    size INTEGER NOT NULL,
+                    mtime REAL NOT NULL,
+                    sha256 TEXT NOT NULL
+                );
                 """
             )
             db.execute(
                 "INSERT OR REPLACE INTO schema_metadata(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
             )
+            movement_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(stock_movements)").fetchall()
+            }
+            if "produto" not in movement_columns:        # additive: old rows are shirts
+                db.execute(
+                    "ALTER TABLE stock_movements ADD COLUMN produto TEXT NOT NULL DEFAULT 'camiseta'")
             art_columns = {
                 row[1] for row in db.execute("PRAGMA table_info(product_link_arts)").fetchall()
             }

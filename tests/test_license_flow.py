@@ -355,11 +355,13 @@ class ActivationTests(LicenseFlowBase):
         self.assertTrue(self.controller.login_window.isVisible())
         self.assertFalse(self.controller.activation_window.isVisible())
 
-    def test_have_a_key_link_on_the_login_screen(self):
+    def test_login_screen_has_no_have_a_key_button(self):
+        # the key is entered after signing in (Conta) or while creating the account
         self.storage.token = None
         self.controller.start()
-        self.controller.login_window.have_key.click()
-        self.assertTrue(self.controller.activation_window.isVisible())
+        self.assertFalse(hasattr(self.controller.login_window, "have_key"))
+        self.assertTrue(self.controller.login_window.register.isVisibleTo(
+            self.controller.login_window))
 
     def test_early_renewal_uses_the_session_bearer_and_keeps_working(self):
         self.sign_in()
