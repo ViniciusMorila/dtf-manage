@@ -6,6 +6,8 @@ The message carries only the plan and the contact data the app already knows
 import re
 from urllib.parse import quote
 
+from dtf_manager.core.constants import APP_NAME
+
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -15,7 +17,7 @@ def _clean(value, limit=120):
 
 def build_message(plan, *, name="", email="", phone=""):
     name, email, phone = _clean(name, 200), _clean(email, 254), _clean(phone, 30)
-    parts = [f"Olá! Quero assinar o DTF Manager. Plano: {plan.name} ({plan.price})."]
+    parts = [f"Olá! Quero assinar o {APP_NAME}. Plano: {plan.name} ({plan.price})."]
     if name:
         parts.append(f"Nome: {name}.")
     parts.append(f"E-mail da conta: {email}." if email

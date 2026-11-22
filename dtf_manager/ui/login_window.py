@@ -30,7 +30,7 @@ class LoginWindow(QWidget):
         title = QLabel(APP_NAME)
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
-        layout.addWidget(QLabel("Entre para acessar o DTF Manager"))
+        layout.addWidget(QLabel(f"Entre para acessar o {APP_NAME}"))
         card = QFrame()
         card.setObjectName("sidebar")
         fields = QVBoxLayout(card)
@@ -126,7 +126,7 @@ class LoginWindow(QWidget):
         self.show_failure(message)
 
     def show_locked(self, message=None):
-        self.reset_for_login(message or "O DTF Manager já está aberto. Feche a outra janela para usar esta sessão.")
+        self.reset_for_login(message or f"O {APP_NAME} já está aberto. Feche a outra janela para usar esta sessão.")
         self.enter.setEnabled(False)
         self.email.setEnabled(False)
         self.password.setEnabled(False)

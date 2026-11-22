@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 import sys
 
 from dtf_manager.core import app_mutex
+from dtf_manager.core.constants import APP_NAME
 from dtf_manager.core.config import ConfigError, no_auth_allowed
 from dtf_manager.core.version import APP_VERSION
 from dtf_manager.ui.styles import APP_STYLE
@@ -26,7 +27,7 @@ def run_application(*, development_no_auth=False) -> int:
     try:
         controller = ApplicationController(app, development_no_auth=development_no_auth)
     except ConfigError as error:
-        QMessageBox.critical(None, "DTF Manager", str(error))
+        QMessageBox.critical(None, APP_NAME, str(error))
         return 2
     controller.start()
     return app.exec()

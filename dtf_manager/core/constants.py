@@ -1,6 +1,6 @@
 from pathlib import Path
 
-APP_NAME = "DTF Manager"
+APP_NAME = "Layera"
 DEFAULT_FILM_WIDTH_MM = 570.0
 DEFAULT_ROLL_LENGTH_M = 30.0
 DEFAULT_DPI = 300

@@ -112,7 +112,7 @@ class ActivationWindow(QWidget):
             "Informe a chave de ativação para renovar. A validade do plano é somada à atual."
             if cancelable else
             ("Seu período de teste terminou. " if trial_ended else "")
-            + "Para continuar usando o DTF Manager, assine um plano ou ative uma chave. "
+            + f"Para continuar usando o {APP_NAME}, assine um plano ou ative uma chave. "
             + ("" if session else "Informe o e-mail e a senha da sua conta."))
         if email and not self.email.text():
             self.email.setText(email)

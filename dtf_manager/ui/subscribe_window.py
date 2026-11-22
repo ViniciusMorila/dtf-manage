@@ -25,7 +25,7 @@ class SubscribeWindow(QWidget):
         self.choose_buttons = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 30, 30, 30)
-        title = QLabel("Assinar o DTF Manager")
+        title = QLabel(f"Assinar o {APP_NAME}")
         title.setObjectName("sectionTitle")
         layout.addWidget(title)
         self.reason = QLabel()

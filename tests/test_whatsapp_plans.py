@@ -78,7 +78,7 @@ class WhatsappConfigTests(unittest.TestCase):
 class MessageTests(unittest.TestCase):
     def test_message_with_session_data(self):
         text = build_message(ANUAL, name="Maria Silva", email="maria@example.com", phone="11912345678")
-        self.assertEqual(text, "Olá! Quero assinar o DTF Manager. Plano: Anual (R$ 449,90). "
+        self.assertEqual(text, "Olá! Quero assinar o Layera. Plano: Anual (R$ 449,90). "
                                "Nome: Maria Silva. E-mail da conta: maria@example.com. "
                                "Telefone: 11912345678.")
 

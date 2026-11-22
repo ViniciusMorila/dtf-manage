@@ -138,7 +138,7 @@ class PlanChoiceTests(SubscribeBase):
         self.opener.assert_called_once()
         url, text = sent_text(self.opener)
         self.assertTrue(url.startswith(f"https://wa.me/{NUMBER}?text="))
-        self.assertEqual(text, "Olá! Quero assinar o DTF Manager. Plano: Anual (R$ 449,90). "
+        self.assertEqual(text, "Olá! Quero assinar o Layera. Plano: Anual (R$ 449,90). "
                                "E-mail da conta: user@example.com.")
         self.assertEqual(url, build_url(NUMBER, text))
         self.assertNotIn(" ", url)
@@ -170,7 +170,7 @@ class PlanChoiceTests(SubscribeBase):
         self.main.subscribe_requested.emit()
         self.subscribe.choose_buttons["MENSAL"].click()
         self.assertEqual(sent_text(self.opener)[1],
-                         "Olá! Quero assinar o DTF Manager. Plano: Mensal (R$ 49,90). Nome: Maria Silva. "
+                         "Olá! Quero assinar o Layera. Plano: Mensal (R$ 49,90). Nome: Maria Silva. "
                          "E-mail da conta: maria@example.com. Telefone: 11912345678.")
 
     def test_without_a_session_the_message_asks_for_the_email_in_the_chat(self):
