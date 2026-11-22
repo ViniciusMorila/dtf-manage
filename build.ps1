@@ -88,6 +88,9 @@ if (-not $iscc) {
            "ou coloque a pasta do ISCC.exe no PATH.")
 }
 
+# Icon: the executable and the installer embed assets\icon\layera.ico; fail early if it is missing.
+if (-not (Test-Path (Join-Path $PSScriptRoot "assets\icon\layera.ico"))) { throw "Icone nao encontrado: assets\icon\layera.ico" }
+
 & $Python -m PyInstaller --noconfirm --clean --distpath dist --workpath build\_work build\dtf_manager.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 

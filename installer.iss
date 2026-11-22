@@ -34,6 +34,8 @@ OutputBaseFilename=DTFManager-Setup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; Installer icon (the app icon is embedded in DTFManager.exe by PyInstaller).
+SetupIconFile=assets\icon\layera.ico
 ; The running app holds this mutex (dtf_manager/core/app_mutex.py): the installer notices it,
 ; closes the app (Restart Manager) and, when it can, restarts it.
 AppMutex={#MyAppMutex}
@@ -51,8 +53,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "dist\DTFManager\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
 ; Normal install: checkbox on the last page.

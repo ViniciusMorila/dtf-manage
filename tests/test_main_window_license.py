@@ -57,6 +57,9 @@ class MainWindowLicenseTests(unittest.TestCase):
     def label(self):
         return self.window.license_label
 
+    def test_the_main_window_has_the_app_icon(self):
+        self.assertFalse(self.window.windowIcon().isNull())
+
     def test_the_title_bar_shows_the_app_version(self):
         from dtf_manager.core.version import APP_VERSION
         self.assertIn(APP_VERSION, self.window.windowTitle())

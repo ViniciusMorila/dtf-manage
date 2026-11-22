@@ -14,6 +14,8 @@ a = Analysis(
         (str(ROOT / "dtf_manager" / "data" / "planos.json"), "dtf_manager/data"),
         # WhatsApp number and support contact shipped inside the executable.
         (str(ROOT / "dtf_manager" / "data" / "app_config.json"), "dtf_manager/data"),
+        # Window/taskbar icon, loaded at runtime from assets/icon (see core/constants.py ICON_FILE).
+        (str(ROOT / "assets" / "icon" / "layera.ico"), "assets/icon"),
     ],
     # win32ctypes backends are loaded dynamically; the PyInstaller hook also collects them.
     hiddenimports=["win32ctypes.pywin32.win32cred"],
@@ -38,5 +40,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    # Icon of DTFManager.exe (Explorer, taskbar, shortcuts).
+    icon=str(ROOT / "assets" / "icon" / "layera.ico"),
 )
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="DTFManager")

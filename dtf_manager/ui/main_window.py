@@ -8,10 +8,10 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PySide6.QtCore import QCoreApplication, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QFont
+from PySide6.QtGui import QCloseEvent, QFont, QIcon
 from PySide6.QtWidgets import QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget, QTabWidget, QVBoxLayout, QWidget
 
-from dtf_manager.core.constants import APP_NAME
+from dtf_manager.core.constants import APP_NAME, ICON_FILE
 from dtf_manager.core.version import APP_VERSION
 from dtf_manager.ui.panels.artwork_panel import ArtworkPanel
 from dtf_manager.ui.panels.project_settings_panel import ProjectSettingsPanel
@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
         QCoreApplication.setOrganizationName("DTF Manager")
         QCoreApplication.setApplicationName("DTF Manager")
         self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
+        self.setWindowIcon(QIcon(str(ICON_FILE)))
         self.resize(1600, 900)
         self.setMinimumSize(1280, 720)
         self.order_import_state = OrderImportState()
