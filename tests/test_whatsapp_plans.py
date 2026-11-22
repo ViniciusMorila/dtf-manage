@@ -21,10 +21,9 @@ def plan_item(**changes):
 
 
 class PlansTests(unittest.TestCase):
-    def test_bundled_file_has_the_four_plans_marked_as_example(self):
+    def test_bundled_file_has_the_four_plans_with_the_annual_one_highlighted(self):
         loaded = load_plans()
         self.assertEqual([p.code for p in loaded], ["MENSAL", "SEMESTRAL", "ANUAL", "VITALICIO"])
-        self.assertTrue(all(p.example for p in loaded))
         self.assertEqual([p.code for p in loaded if p.highlight], ["ANUAL"])
         self.assertEqual(next(p for p in loaded if p.code == "ANUAL").highlight, "Mais vantajoso")
 

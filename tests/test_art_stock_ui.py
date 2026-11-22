@@ -54,6 +54,15 @@ class Base(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
         cls.app.setStyleSheet(APP_STYLE)
 
+    def tearDown(self):
+        # Background pools must be idle before the interpreter exits (otherwise Qt crashes on shutdown).
+        for worker in getattr(self, "_workers", []):
+            worker.wait()
+        for widget in self.app.topLevelWidgets():
+            widget.close()
+            widget.deleteLater()
+        self.app.processEvents()
+
     def pump(self, thumbs=None):
         if thumbs is not None:
             thumbs.wait()
@@ -66,14 +75,20 @@ class Base(unittest.TestCase):
         self.arts, self.stock, self.path = make_art_service()
         self.prompts = ArtPrompts()
         self.tab = ArtStockTab()
+        self._widgets = getattr(self, "_widgets", [])
+        self._widgets.append(self.tab)
         self.thumbs = ThumbnailCache()
+        self._workers = getattr(self, "_workers", [])
+        self._workers.append(self.thumbs)
         self.tab.set_thumbnails(self.thumbs)
         self.orders = []
         self.scanner = IdenticalFilesScanner()
+        self._workers.append(self.scanner)
         self.controller = ArtStockController(
             self.arts, self.prompts, self.tab, orders_provider=lambda: self.orders,
             scanner=self.scanner, thumbs=self.thumbs)
         self.stock_tab = StockTab()
+        self._widgets.append(self.stock_tab)
         self.shirts = StockController(self.stock, self.prompts, self.stock_tab,
                                       mounted_lookup=lambda numbers: set())
         self.shirts.arts = self.controller

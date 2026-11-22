@@ -104,6 +104,13 @@ class ControllerBase(unittest.TestCase):
             mounted_lookup=lambda numbers: self.mounted & set(numbers))
         self.colors, self.sizes = ids(self.service)
 
+    def tearDown(self):
+        # A tab left visible makes Qt crash when the interpreter exits.
+        for widget in self.app.topLevelWidgets():
+            widget.close()
+            widget.deleteLater()
+        self.app.processEvents()
+
     def orders(self, prefix="P", n=3, variation="Preta,G", quantity=1):
         return [make_order(f"{prefix}{i}", (variation, quantity)) for i in range(n)]
 
