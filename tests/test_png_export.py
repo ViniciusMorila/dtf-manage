@@ -108,16 +108,20 @@ class PngExportTests(unittest.TestCase):
         self.assertEqual(before, [(item.pos(), item.transform(), item.pixmap().cacheKey()) for item in items])
 
     def test_split_dimensions_and_art_positions_are_preserved(self):
-        self.view._artwork_items[str(self.source)][0].setPos(2, 1)
-        paths = self.export(height=10, split=0.005)
+        self.view.update_artwork_quantity(str(self.source), 2)
+        first, second = self.view._artwork_items[str(self.source)]
+        first.setPos(2, 1)                    # 1 .. 7 mm: crosses the 5 mm cut, so part 1 grows to 7.2 mm
+        second.setPos(2, 9)                   # 9 .. 15 mm: starts the second part
+        paths = self.export(height=16, split=0.005)
         self.assertEqual(len(paths), 2)
         images = [QImage(str(path)) for path in paths]
         self.assertEqual([(image.width(), image.height()) for image in images],
-                         [(200, 72), (200, 28)])
+                         [(200, 72), (200, 62)])
         self.assertEqual(images[0].pixelColor(25, 15), QColor("#3366ee"))
         self.assertEqual(images[0].pixelColor(15, 15).alpha(), 0)
-        self.assertEqual(images[0].pixelColor(25, 68), QColor("#3366ee"))
-        self.assertEqual(images[1].pixelColor(25, 5).alpha(), 0)
+        self.assertEqual(images[0].pixelColor(25, 68), QColor("#3366ee"))     # whole art, not cut at 5 mm
+        self.assertEqual(images[1].pixelColor(25, 5), QColor("#3366ee"))      # next part starts at the next art
+        self.assertEqual(images[1].pixelColor(25, 58), QColor("#3366ee"))
 
     def test_rotated_scaled_artwork_opacity_and_position_are_preserved(self):
         art = self.view._artwork_items[str(self.source)][0]
@@ -216,10 +220,10 @@ class PngExportTests(unittest.TestCase):
         art.setTransform(QTransform().scale(1, 100))
         art.setPos(0, 2500)
         scene.addItem(art)
-        self.assertEqual(self.exporter._split_ranges(scene, 7000, 3000),
-                         [(0, 3500.2), (3500.2, 3000.0), (6500.2, 499.8000000000002)])
+        # The art is kept whole in the first part (3.5 m + clearance); the empty film after it is not printed.
+        self.assertEqual(self.exporter._split_ranges(scene, 7000, 3000), [(0.0, 3500.2)])
 
-    def test_safe_cut_rechecks_other_columns_and_ignores_overlays(self):
+    def test_an_art_in_another_column_goes_whole_to_the_next_part_and_overlays_are_ignored(self):
         scene = QGraphicsScene()
         for x, top, bottom in ((0, 4, 7), (12, 7.1, 9)):
             art = ArtworkItem(QPixmap(str(self.source)))
@@ -228,17 +232,54 @@ class PngExportTests(unittest.TestCase):
             scene.addItem(art)
         scene.addRect(0, 0, 20, 30)
         parts = self.exporter._split_ranges(scene, 20, 5)
-        self.assertAlmostEqual(parts[0][1], 9.2)
-        self.assertAlmostEqual(sum(length for _, length in parts), 20)
+        self.assertEqual(len(parts), 2)
+        self.assertAlmostEqual(parts[0][1], 7.2)              # the first art, whole, plus clearance
+        self.assertAlmostEqual(parts[1][0], 7.1)              # the second starts exactly where its art starts
 
-    def test_safe_cut_keeps_target_in_empty_gap_and_at_art_start(self):
+    def stagger_two_columns(self, total_mm):
+        """Columns with slightly different art heights: their gaps only line up every ~9 m."""
+        scene = QGraphicsScene()
+        for x, height, pitch in ((0, 300, 305), (300, 290, 295)):
+            y = 0.0
+            while y + height <= total_mm:
+                art = ArtworkItem(QPixmap(str(self.source)))
+                art.setTransform(QTransform().scale(28, height / 10))
+                art.setPos(x, y)
+                scene.addItem(art)
+                y += pitch
+        return scene
+
+    def test_staggered_columns_still_split_at_the_selected_length(self):
+        # Regression: 7 m selected on a 38 m roll used to give parts of 18 m (the cut chased the gaps).
+        scene = self.stagger_two_columns(38000)
+        parts = self.exporter._split_ranges(scene, 38000, 7000)
+        self.assertEqual(len(parts), 6)
+        for start, length in parts[:-1]:
+            self.assertGreaterEqual(length, 7000)
+            self.assertLess(length, 7000 + 300 + 1)           # target + at most the art that crosses it
+        self.assertLess(parts[-1][1], 7000 + 301)
+
+    def test_no_art_is_cut_and_every_art_is_printed_exactly_once(self):
+        scene = self.stagger_two_columns(20000)
+        arts = [item for item in scene.items() if isinstance(item, ArtworkItem)]
+        plan = self.exporter._plan_parts(scene, 20000, 7000)
+        taken = [item for _, _, items in plan for item in items]
+        self.assertEqual(len(taken), len(arts))
+        self.assertEqual({id(item) for item in taken}, {id(item) for item in arts})
+        for start, length, items in plan:
+            for item in items:
+                bounds = item.mapRectToScene(QRectF(item.offset(), item.pixmap().deviceIndependentSize()))
+                self.assertGreaterEqual(bounds.top(), start - 1e-6)
+                self.assertLessEqual(bounds.bottom(), start + length + 1e-6)
+
+    def test_an_art_starting_at_the_cut_line_belongs_to_the_next_part(self):
         scene = QGraphicsScene()
         art = ArtworkItem(QPixmap(str(self.source)))
         art.setTransform(QTransform().scale(0.4, 0.2))
         art.setPos(0, 5)
         scene.addItem(art)
-        self.assertEqual(self.exporter._split_ranges(scene, 15, 5),
-                         [(0, 5), (5, 5), (10, 5)])
+        # Empty film before the first art is skipped; the art starts exactly at the cut and is whole.
+        self.assertEqual(self.exporter._split_ranges(scene, 15, 5), [(5, 5)])
 
     def test_manual_position_length_is_used_for_export(self):
         self.view.set_roll_settings(20, 0)

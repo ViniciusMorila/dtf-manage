@@ -3,7 +3,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from PySide6.QtCore import QEvent, QSize, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QIcon, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QCursor, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
@@ -20,6 +20,11 @@ from dtf_manager.ui.widgets.manual_link_art_card import ManualLinkArtCard
 from dtf_manager.ui.widgets.manual_link_art_card import transparent_preview
 from dtf_manager.services.link_memory_service import ArtLinkMemoryService
 from dtf_manager.services.link_memory_repository import LinkMemoryStorageError
+
+
+# Suggestion cards are 118x116 with 8 px gaps: 2 rows = 248 px, 3 rows = 372 px (plus the grid margins).
+SUGGESTIONS_MIN_HEIGHT = 262
+SUGGESTIONS_MAX_HEIGHT = 390
 
 
 class ManualLinkingPage(QWidget):
@@ -40,9 +45,11 @@ class ManualLinkingPage(QWidget):
         self._last_saved_arts: list[LinkedArt] = []
         self._linked_in_session: set[str] = set()
         self._skipped_item_ids: set[str] = set()
+        self._session_ids: tuple[str, ...] = ()   # items still to link when the session began (the counter's basis)
         self._image_reply: QNetworkReply | None = None
         self._artwork_folder: Path | None = None
         self._art_files: tuple[Path, ...] | None = None
+        self._pointer_entered_list = False       # the suggestions close once the mouse has been over them and leaves
         self._network = QNetworkAccessManager(self)
         self._build_ui()
         application = QApplication.instance()
@@ -123,14 +130,16 @@ class ManualLinkingPage(QWidget):
         arts_layout.addWidget(self.copy_previous_button)
         self.suggestions_scroll = QScrollArea()
         self.suggestions_scroll.setWidgetResizable(True)
-        self.suggestions_scroll.setMaximumHeight(250)
+        # Two whole rows of cards at least (never squeezed by the arts list below), up to three.
+        self.suggestions_scroll.setMinimumHeight(SUGGESTIONS_MIN_HEIGHT)
+        self.suggestions_scroll.setMaximumHeight(SUGGESTIONS_MAX_HEIGHT)
         self.suggestions_content = QWidget()
         self.suggestions_grid = QGridLayout(self.suggestions_content)
         self.suggestions_grid.setContentsMargins(0, 4, 4, 4)
         self.suggestions_grid.setSpacing(8)
         self.suggestions_scroll.setWidget(self.suggestions_content)
         self.suggestions_scroll.hide()
-        arts_layout.addWidget(self.suggestions_scroll)
+        arts_layout.addWidget(self.suggestions_scroll, 3)     # wins the space over the arts list while open
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(180)
@@ -173,6 +182,7 @@ class ManualLinkingPage(QWidget):
         self._linked_in_session.clear()
         self._skipped_item_ids.clear()
         self._last_saved_arts.clear()
+        self._session_ids = self._pending_ids(item_ids)
         if self._seek_next_unlinked(include_current=True):
             self._load_current()
         else:
@@ -195,6 +205,23 @@ class ManualLinkingPage(QWidget):
             return False
         self._load_current()
         return True
+
+    def _pending_ids(self, item_ids) -> tuple[str, ...]:
+        """Items the user still has to link: the ones already linked (automatically or before) are not part of it."""
+        pending = []
+        for item_id in item_ids:
+            item = self._state.find_item(item_id)
+            if item is not None and (item.link_status == "unlinked" or item_id in self._skipped_item_ids):
+                pending.append(item_id)
+        return tuple(pending)
+
+    def _has_pending_after_current(self) -> bool:
+        ids = self._queue.item_ids
+        for item_id in ids[self._queue.index + 1:]:
+            item = self._state.find_item(item_id)
+            if item is not None and item.link_status == "unlinked":
+                return True
+        return False
 
     def _seek_next_unlinked(self, include_current: bool = False) -> bool:
         if not include_current and not self._queue.advance():
@@ -232,6 +259,7 @@ class ManualLinkingPage(QWidget):
         self._session_active = not self._single_mode
         self._queue = ManualLinkQueue(valid_ids, snapshot.current_item_id)
         self._skipped_item_ids = set(snapshot.skipped_item_ids)
+        self._session_ids = self._pending_ids(valid_ids)
         if not self._single_mode and not self._seek_next_unlinked(include_current=True):
             return False
         self._load_current()
@@ -263,21 +291,25 @@ class ManualLinkingPage(QWidget):
         for name, value in values.items():
             self.info_values[name].setText(value)
             self.info_values[name].setToolTip(value)
-        total = len(self._queue.item_ids)
-        position = self._queue.index + 1
-        self.position_label.setText("" if self._single_mode else f"Produto {position} de {total}")
+        # "Produto 1 de 27": only the products that still have to be linked, not the whole spreadsheet.
+        total = len(self._session_ids)
+        current_id = self._queue.current_item_id
+        position = self._session_ids.index(current_id) + 1 if current_id in self._session_ids else 0
+        self.position_label.setText(
+            "" if self._single_mode or not total else f"Produto {position} de {total}")
         self.session_progress.setVisible(not self._single_mode)
         self.session_progress.setValue(round(position / total * 100) if total else 0)
         self.previous_button.setVisible(not self._single_mode)
-        self.previous_button.setEnabled(self._queue.index > 0)
+        self.previous_button.setEnabled(position > 1)
         self.skip_button.setVisible(not self._single_mode)
+        last = not self._has_pending_after_current()
         self.save_button.setText(
             "SALVAR ALTERAÇÕES" if self._single_mode else
-            "SALVAR E CONCLUIR" if self._queue.is_last else "SALVAR E AVANÇAR"
+            "SALVAR E CONCLUIR" if last else "SALVAR E AVANÇAR"
         )
         self.copy_previous_button.setEnabled(bool(self._last_saved_arts))
         if not self._single_mode:
-            self.skip_button.setText("PULAR E CONCLUIR" if self._queue.is_last else "PULAR POR ENQUANTO")
+            self.skip_button.setText("PULAR E CONCLUIR" if last else "PULAR POR ENQUANTO")
         self._rebuild_arts()
         self._load_product_image(item)
 
@@ -370,6 +402,7 @@ class ManualLinkingPage(QWidget):
             child = self.suggestions_grid.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
+        self._pointer_entered_list = False
         self.suggestions_scroll.hide()
 
     def _art_search_changed(self, text: str) -> None:
@@ -380,6 +413,12 @@ class ManualLinkingPage(QWidget):
             self._search_timer.start()
 
     def eventFilter(self, watched, event) -> bool:
+        scroll = getattr(self, "suggestions_scroll", None)     # events can arrive while the page is still being built
+        if isinstance(watched, QWidget) and scroll is not None and scroll.isVisible():
+            if event.type() == QEvent.Type.Enter and self._is_suggestions_widget(watched):
+                self._pointer_entered_list = True
+            elif event.type() == QEvent.Type.Leave and watched is self.suggestions_scroll:
+                QTimer.singleShot(150, self._close_if_pointer_left_list)
         if (
             event.type() == QEvent.Type.MouseButtonPress
             and self.isVisible()
@@ -389,6 +428,19 @@ class ManualLinkingPage(QWidget):
         ):
             QTimer.singleShot(0, self._close_art_search)
         return super().eventFilter(watched, event)
+
+    def _is_suggestions_widget(self, widget: QWidget) -> bool:
+        return widget is self.suggestions_scroll or self.suggestions_scroll.isAncestorOf(widget)
+
+    def _pointer_over_suggestions(self) -> bool:
+        scroll = self.suggestions_scroll
+        return scroll.rect().contains(scroll.mapFromGlobal(QCursor.pos()))
+
+    def _close_if_pointer_left_list(self) -> None:
+        """Closes the suggestions when the mouse, after being over them, is no longer over them."""
+        if (self._pointer_entered_list and self.suggestions_scroll.isVisible()
+                and not self._pointer_over_suggestions()):
+            self._close_art_search()
 
     def _is_search_widget(self, widget: QWidget) -> bool:
         return (
@@ -538,8 +590,15 @@ class ManualLinkingPage(QWidget):
             self.session_completed.emit(len(self._linked_in_session))
 
     def _previous(self) -> None:
-        if self.confirm_can_leave() and self._queue.previous():
-            self._load_current()
+        """Back to the previous product of the session (the ones already linked are not shown)."""
+        if not self.confirm_can_leave():
+            return
+        origin = self._queue.index
+        while self._queue.previous():
+            if self._queue.current_item_id in self._session_ids:
+                self._load_current()
+                return
+        self._queue.index = origin
 
     def _back(self) -> None:
         if self.confirm_can_leave():

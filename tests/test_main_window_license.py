@@ -9,6 +9,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import QApplication
 
 from dtf_manager.models.license import LicenseInfo
@@ -16,7 +17,7 @@ from dtf_manager.services.active_operation_service import create_active_operatio
 from dtf_manager.services.production_history_repository import ProductionHistoryRepository
 from dtf_manager.services.sqlite_database import DTFDatabase
 from dtf_manager.ui.main_window import MainWindow
-from dtf_manager.ui.styles import APP_STYLE
+from dtf_manager.ui.styles import APP_STYLE, THEME
 from tests.license_fakes import license_data
 
 
@@ -53,6 +54,12 @@ class MainWindowLicenseTests(unittest.TestCase):
     def setUp(self):
         self.window.set_user_name("")
         self.window.set_license_state(None)
+
+    @staticmethod
+    def plain(label):
+        document = QTextDocument()
+        document.setHtml(label.text())
+        return document.toPlainText()
 
     def label(self):
         return self.window.license_label
@@ -130,16 +137,25 @@ class MainWindowLicenseTests(unittest.TestCase):
         self.assertEqual(greeting.text(), "Olá, Vinicius")                  # no parentheses
         self.assertEqual(label.text(), "Período de teste: faltam 7 dias")
         w.set_license_state(info(plano="ANUAL", dias_restantes=300))
-        self.assertEqual(greeting.text(), "Olá, Vinicius (Anual)")
+        self.assertEqual(self.plain(greeting), "Olá, Vinicius (Anual)")
         self.assertEqual(label.text(), "300 dias restantes")
         w.set_license_state(info(plano="MENSAL", dias_restantes=5))
-        self.assertEqual(greeting.text(), "Olá, Vinicius (Mensal)")
+        self.assertEqual(self.plain(greeting), "Olá, Vinicius (Mensal)")
         self.assertEqual(label.text(), "vence em 5 dias")
         self.assertEqual(label.property("tone"), "warning")
         w.set_license_state(info(plano="VITALICIO", data_expiracao=None, dias_restantes=None,
                                  vitalicia=True))
-        self.assertEqual(greeting.text(), "Olá, Vinicius (Vitalício)")
+        self.assertEqual(self.plain(greeting), "Olá, Vinicius (Vitalício)")
+        self.assertIn(THEME["GOLD"], greeting.text())                      # only the plan is gold
+        self.assertNotIn(THEME["GOLD"], greeting.text().split("<span")[0])
         self.assertFalse(label.isVisible())
+
+    def test_the_greeting_never_renders_markup_coming_from_the_name_or_plan(self):
+        w, greeting = self.window, self.window.greeting_label
+        w.set_user_name("<b>Maria</b>")
+        w.set_license_state(info(plano="ANUAL", dias_restantes=300))
+        self.assertEqual(self.plain(greeting), "Olá, <b>Maria</b> (Anual)")
+        self.assertNotIn("<b>", greeting.text())
 
     def test_greeting_comes_before_the_license_text_in_the_corner(self):
         corner = self.window.menuBar().cornerWidget(Qt.Corner.TopRightCorner)

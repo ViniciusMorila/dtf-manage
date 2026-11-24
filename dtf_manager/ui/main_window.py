@@ -1,6 +1,7 @@
 from dtf_manager.core import auth_timing
 from dataclasses import replace
 from pathlib import Path
+from html import escape
 import sys
 from uuid import uuid4
 
@@ -15,7 +16,7 @@ from dtf_manager.core.constants import APP_NAME, ICON_FILE
 from dtf_manager.core.version import APP_VERSION
 from dtf_manager.ui.panels.artwork_panel import ArtworkPanel
 from dtf_manager.ui.panels.project_settings_panel import ProjectSettingsPanel
-from dtf_manager.ui.styles import APP_STYLE
+from dtf_manager.ui.styles import APP_STYLE, THEME
 from dtf_manager.ui.widgets.roll_view import RollView
 from dtf_manager.ui.widgets.artwork_setup_dialog import ArtworkSetupDialog
 from dtf_manager.services.export_service import ExportService
@@ -115,7 +116,8 @@ class MainWindow(QMainWindow):
         self.license_label.hide()
         self.greeting_label = QLabel()
         self.greeting_label.setObjectName("greetingLabel")
-        self.greeting_label.setTextFormat(Qt.TextFormat.PlainText)
+        # Rich text only so the plan can be gold; every value is escaped (see _render_account_header).
+        self.greeting_label.setTextFormat(Qt.TextFormat.RichText)
         self.greeting_label.hide()
         self.account_button = QPushButton("Conta")
         menu = QMenu(self.account_button)
@@ -166,9 +168,10 @@ class MainWindow(QMainWindow):
         Without a known name the label keeps the full "Plano X: ..." text instead."""
         info, offline_remaining, name = (self._license_info, self._offline_remaining,
                                          self._first_name)
-        greeting = f"Olá, {name}" if name else ""
+        greeting = f"Olá, {escape(name, quote=False)}" if name else ""
         if info is not None and name and info.plano != "TESTE":
-            greeting += f" ({info.plan_name})"
+            plan = escape(f"({info.plan_name})", quote=False)
+            greeting += f' <span style="color: {THEME["GOLD"]};">{plan}</span>'
         self.greeting_label.setText(greeting)
         self.greeting_label.setVisible(bool(greeting))
         if info is None:
@@ -502,9 +505,8 @@ class MainWindow(QMainWindow):
                 self, "Vinculação manual", "Todos os produtos já estão vinculados."
             )
             return
-        # Keep every imported item in the queue so its position remains based on
-        # the original spreadsheet (for example 7/89), while the page skips the
-        # items that are already linked.
+        # Every imported item stays in the queue (its order is the spreadsheet's), but the page only
+        # stops at the ones still unlinked and counts only those ("Produto 1 de 27").
         item_ids = tuple(item.id for item in self.order_import_state.all_items)
         self.pages.setCurrentWidget(self.manual_linking_page)
         self.manual_linking_page.start_queue(item_ids, start_item_id)

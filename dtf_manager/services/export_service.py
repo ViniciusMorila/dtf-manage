@@ -29,16 +29,15 @@ class ExportService:
             if max_length_m is not None and max_length_m > 0
             else height_mm
         )
-        parts = self._split_ranges(scene, height_mm, split_height_mm)
+        parts = self._plan_parts(scene, height_mm, split_height_mm)
         part_count = len(parts)
         safe_output_name = self._safe_file_name(output_name)
         DOWNLOADS_PATH.mkdir(parents=True, exist_ok=True)
-        print_scene = self._artwork_scene(scene)
         output_paths = []
-        for part_index, (source_y, part_height_mm) in enumerate(parts):
+        for part_index, (source_y, part_height_mm, part_items) in enumerate(parts):
             output_paths.append(
                 self._export_part(
-                    print_scene,
+                    self._artwork_scene(scene, part_items),
                     width_mm,
                     part_height_mm,
                     source_y,
@@ -51,40 +50,61 @@ class ExportService:
         return output_paths
 
     @staticmethod
-    def _split_ranges(scene, height_mm, target_mm):
-        """Advance cuts past printable art, including 0.2 mm of clearance.
-
-        The target is measured from each actual cut. Chained artwork across
-        columns can require a longer part; geometry and the roll stay intact.
-        """
-        intervals = []
-        for item in scene.items():
-            if not isinstance(item, ArtworkItem) or not item.isVisible():
-                continue
-            bounds = item.mapRectToScene(QRectF(
-                item.offset(), item.pixmap().deviceIndependentSize()))
-            intervals.append((bounds.top(), bounds.bottom()))
-        intervals.sort()
-        parts = []
-        start = 0.0
-        while start < height_mm:
-            end = min(start + target_mm, height_mm)
-            for top, bottom in intervals:
-                if top >= end or end >= height_mm:
-                    break
-                if bottom + 0.2 > end:
-                    end = min(height_mm, bottom + 0.2)
-            parts.append((start, end - start))
-            start = end
-        return parts
+    def _printable_items(scene):
+        return [item for item in scene.items()
+                if isinstance(item, ArtworkItem) and item.isVisible()]
 
     @staticmethod
-    def _artwork_scene(scene):
-        """Copy printable pixels/geometry, never editor guides or selection state."""
+    def _item_span(item):
+        bounds = item.mapRectToScene(QRectF(item.offset(), item.pixmap().deviceIndependentSize()))
+        return bounds.top(), bounds.bottom()
+
+    @classmethod
+    def _plan_parts(cls, scene, height_mm, target_mm):
+        """Parts of about `target_mm`, without ever cutting an artwork.
+
+        Every artwork belongs to the part where it STARTS and is printed whole there. When one
+        crosses the nominal cut it only makes that part a little longer (7 m becomes 7.3 m); the
+        next part starts at the first artwork that was not taken. Nothing chains from column to
+        column, so a part never grows beyond the target plus the tallest artwork.
+        Returns [(source_y_mm, part_height_mm, [ArtworkItem, ...])].
+        """
+        remaining = sorted(((*cls._item_span(item), item) for item in cls._printable_items(scene)),
+                           key=lambda entry: (entry[0], entry[1]))
+        if not remaining:
+            return [(0.0, height_mm, [])]
+        parts = []
+        start = 0.0                                   # the first part keeps the top of the roll
+        while remaining:
+            end = start + target_mm
+            taken = [entry for entry in remaining if entry[0] < end]
+            if not taken:                             # empty film before the next artwork
+                start = remaining[0][0]
+                continue
+            remaining = [entry for entry in remaining if entry[0] >= end]
+            last_bottom = max(bottom for _, bottom, _ in taken)
+            end = min(height_mm, max(end, last_bottom + 0.2))   # 0.2 mm of clearance below the art
+            parts.append((start, end - start, [item for _, _, item in taken]))
+            if remaining:
+                start = remaining[0][0]               # no blank film at the top of the next part
+        return parts
+
+    @classmethod
+    def _split_ranges(cls, scene, height_mm, target_mm):
+        return [(start, length) for start, length, _ in cls._plan_parts(scene, height_mm, target_mm)]
+
+    @staticmethod
+    def _artwork_scene(scene, only_items=None):
+        """Copy printable pixels/geometry, never editor guides or selection state.
+
+        `only_items` limits the copy to the artworks of one part (each one is printed whole)."""
         result = QGraphicsScene()
         result.setSceneRect(scene.sceneRect())
+        wanted = None if only_items is None else {id(item) for item in only_items}
         for item in scene.items(Qt.SortOrder.AscendingOrder):
             if not isinstance(item, ArtworkItem) or not item.isVisible():
+                continue
+            if wanted is not None and id(item) not in wanted:
                 continue
             copy = QGraphicsPixmapItem(item.pixmap())
             copy.setOffset(item.offset())
