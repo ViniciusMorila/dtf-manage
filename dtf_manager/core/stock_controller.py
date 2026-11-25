@@ -20,6 +20,7 @@ def file_sha256(path: Path) -> str:
 
 class StockController(QObject):
     changed = Signal(bool)          # True when there is a futuro to finalize
+    finalized = Signal()            # "Finalizar pedido" went through (stock deducted)
 
     def __init__(self, service: StockService, prompts, tab=None, mounted_lookup=None,
                  parent=None):
@@ -34,7 +35,9 @@ class StockController(QObject):
             tab.new_color_requested.connect(self.new_color)
             tab.new_size_requested.connect(self.new_size)
             tab.delete_color_requested.connect(self.delete_color)
+            tab.delete_size_requested.connect(self.delete_size)
             tab.bulk_requested.connect(self.bulk_add)
+            tab.clear_future_requested.connect(self.clear_future)
             tab.history_requested.connect(self.show_history)
             tab.stock_edit_requested.connect(self.edit_stock)
             tab.separated_changed.connect(self.service.set_separated)
@@ -101,6 +104,25 @@ class StockController(QObject):
         if not self.prompts.confirm_delete_color(name, stock, future):
             return False
         _, ok = self._try(self.service.delete_color, color_id)
+        self.refresh()
+        return ok
+
+    def delete_size(self, size_id: int = -1) -> bool:
+        """Removes a size. size_id -1 = ask which one. Always asks for confirmation and says
+        what will be discarded."""
+        snapshot = self.service.snapshot()
+        if size_id < 0:
+            size_id = self.prompts.choose_size(snapshot.sizes)
+            if size_id is None:
+                return False
+        preview, ok = self._try(self.service.preview_delete_size, size_id)
+        if not ok:
+            self.refresh()
+            return False
+        name, stock, future = preview
+        if not self.prompts.confirm_delete_size(name, stock, future):
+            return False
+        _, ok = self._try(self.service.delete_size, size_id)
         self.refresh()
         return ok
 
@@ -190,6 +212,17 @@ class StockController(QObject):
             self.prompts.info("Estoque: importação", "\n".join(notes))
         return True
 
+    def clear_future(self) -> bool:
+        """"Limpar futuro" of the shirt tab: asks first, then zeroes only the shirts' futuro."""
+        if not self.service.snapshot().has_future:
+            self.prompts.info("Limpar futuro", "Não há futuro de camisetas para limpar.")
+            return False
+        if not self.prompts.confirm_clear_future("camisetas"):
+            return False
+        done = self.service.clear_future()
+        self.refresh()
+        return done
+
     def cancel_import(self) -> bool:
         """The operation was cancelled: forget its futuro and its import record."""
         done = self.service.cancel_current_import(self.art_service)
@@ -219,6 +252,8 @@ class StockController(QObject):
             done = self.service.finalize(self.art_service) is not None
             if done and self.arts is not None:
                 self.arts.clear_manual()
+            if done:
+                self.finalized.emit()
             return done
         finally:
             self._busy = False

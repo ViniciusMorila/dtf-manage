@@ -124,12 +124,18 @@ class ImportNoticeDialog(QDialog):
             label.setObjectName("importWarning")
             label.setWordWrap(True)
             layout.addWidget(label)
+            again = QLabel("Ao importar mesmo assim, o futuro atual (camisetas e estampas) é zerado e "
+                           "refeito de acordo com esta planilha. O estoque só é descontado quando "
+                           "você clicar em FINALIZAR PEDIDO.")
+            again.setWordWrap(True)
+            layout.addWidget(again)
         if notice.finalized_count:
             label = QLabel(f"{notice.finalized_count} pedidos já foram finalizados no estoque em "
                            f"{notice.finalized_date}. Por padrão eles ficam fora do futuro.")
             label.setWordWrap(True)
             layout.addWidget(label)
             self.include_finalized = QCheckBox("Incluir esses pedidos de novo no futuro")
+            self.include_finalized.setChecked(duplicate is not None)      # the same file again: count it again
             layout.addWidget(self.include_finalized)
         else:
             self.include_finalized = None
@@ -637,6 +643,30 @@ class StockPrompts:
                      "Esses números serão descartados (ficam registrados no histórico).")
         text += "\n\nVocê pode cadastrar a cor de novo depois."
         answer = QMessageBox.question(self.parent, "Excluir cor", text)
+        return answer == QMessageBox.StandardButton.Yes
+
+    def choose_size(self, sizes):
+        names = [s.name for s in sizes]
+        if not names:
+            return None
+        name, ok = QInputDialog.getItem(self.parent, "Excluir tamanho", "Qual tamanho excluir?",
+                                        names, 0, False)
+        return sizes[names.index(name)].id if ok else None
+
+    def confirm_delete_size(self, name: str, stock: int, future: int) -> bool:
+        text = f"Excluir o tamanho \"{name}\"?"
+        if stock or future:
+            text += (f"\n\nEle tem {stock} camiseta(s) em estoque e {future} no futuro. "
+                     "Esses números serão descartados (ficam registrados no histórico).")
+        text += "\n\nVocê pode cadastrar o tamanho de novo depois."
+        answer = QMessageBox.question(self.parent, "Excluir tamanho", text)
+        return answer == QMessageBox.StandardButton.Yes
+
+    def confirm_clear_future(self, what: str) -> bool:
+        answer = QMessageBox.question(
+            self.parent, "Limpar futuro",
+            f"Limpar o futuro de {what}?\n\nO que está reservado para os pedidos importados será "
+            "zerado. O estoque não muda. Para contar de novo, importe a planilha outra vez.")
         return answer == QMessageBox.StandardButton.Yes
 
     def info(self, title: str, text: str) -> None:

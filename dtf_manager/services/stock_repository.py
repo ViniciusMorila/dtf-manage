@@ -77,6 +77,14 @@ class StockRepository:
             c.execute("DELETE FROM stock_aliases WHERE kind='color' AND target_id=?", (color_id,))
             c.execute("DELETE FROM stock_colors WHERE id=?", (color_id,))
 
+    def delete_size(self, size_id: int, db=None) -> None:
+        """Removes the size and everything that points to it."""
+        with self.tx(db) as c:
+            c.execute("DELETE FROM stock_levels WHERE size_id=?", (size_id,))
+            c.execute("DELETE FROM stock_future WHERE size_id=?", (size_id,))
+            c.execute("DELETE FROM stock_aliases WHERE kind='size' AND target_id=?", (size_id,))
+            c.execute("DELETE FROM stock_sizes WHERE id=?", (size_id,))
+
     def add_size(self, name: str, db=None) -> StockSize:
         with self.tx(db) as c:
             cursor = c.execute("INSERT INTO stock_sizes(name, norm) VALUES(?,?)",

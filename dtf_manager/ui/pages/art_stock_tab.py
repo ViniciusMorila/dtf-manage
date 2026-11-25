@@ -39,6 +39,7 @@ class ArtStockTab(QWidget):
     move_requested = Signal()
     suggest_requested = Signal()
     copy_missing_requested = Signal()
+    clear_future_requested = Signal()
     history_requested = Signal()
     manual_link_requested = Signal()
 
@@ -147,7 +148,9 @@ class ArtStockTab(QWidget):
         self.suggest_button = QPushButton("Sugerir correspondências")
         self.suggest_button.clicked.connect(self.suggest_requested)
         self.suggest_button.hide()
-        for button in (self.move_button, self.suggest_button):
+        self.clear_future_button = QPushButton("Limpar futuro")
+        self.clear_future_button.clicked.connect(self.clear_future_requested)
+        for button in (self.move_button, self.suggest_button, self.clear_future_button):
             buttons.addWidget(button)
         buttons.addStretch()
         left.addLayout(buttons)

@@ -121,6 +121,35 @@ class StockService:
             repo.delete_color(color_id, db=db)
         return name, stock, future
 
+    def preview_delete_size(self, size_id: int):
+        """(name, units in stock, units in the futuro) of a size that is about to be removed."""
+        repo = self.repository
+        with repo.tx() as db:
+            size = next((s for s in repo.sizes(db) if s.id == size_id), None)
+            if size is None:
+                raise StockError("Esse tamanho não existe mais.")
+            stock = sum(q for (_, sid), q in repo.levels(db).items() if sid == size_id)
+            future = sum(q for (_, sid), (q, _) in repo.future(db).items() if sid == size_id)
+        return size.name, stock, future
+
+    def delete_size(self, size_id: int) -> tuple[str, int, int]:
+        """Removes a size with its stock, futuro and equivalences (one transaction). What it held
+        is logged as manual adjustments to 0 so the history keeps it."""
+        repo = self.repository
+        with repo.tx() as db:
+            name, stock, future = self.preview_delete_size(size_id)
+            colors = {c.id: c.name for c in repo.colors(db)}
+            for (cid, sid), quantity in sorted(repo.levels(db).items()):
+                if sid == size_id and quantity > 0:
+                    repo.add_movement(MOVEMENT_MANUAL, "estoque", colors[cid], name, quantity, 0,
+                                      note="Tamanho excluído", db=db)
+            for (cid, sid), (quantity, _) in sorted(repo.future(db).items()):
+                if sid == size_id:
+                    repo.add_movement(MOVEMENT_IMPORT, "futuro", colors[cid], name, quantity, 0,
+                                      note="Tamanho excluído", db=db)
+            repo.delete_size(size_id, db=db)
+        return name, stock, future
+
     def replace_aliases(self, rows) -> None:
         """rows: (kind, text, target_id). Text is normalized; empty or duplicate rows ignored."""
         clean = {}
@@ -492,6 +521,21 @@ class StockService:
             for key in ("current_import_id", "signature", "import_note"):
                 repo.set_state(key, "", db=db)
             repo.set_state("counted_orders", "[]", db=db)
+        return True
+
+    def clear_future(self) -> bool:
+        """The user cleared the shirts' futuro by hand: stock and the import record stay.
+        Importing the spreadsheet again counts it from zero. False when there was nothing."""
+        if not self.snapshot().has_future:
+            return False
+        repo = self.repository
+        with repo.tx() as db:
+            names = self._names(db)
+            for (cid, sid), (quantity, _) in sorted(repo.future(db).items()):
+                repo.add_movement(MOVEMENT_IMPORT, "futuro", names[0][cid], names[1][sid],
+                                  quantity, 0, note="Futuro limpo", db=db)
+            repo.replace_future({}, db=db)
+            repo.replace_pending([], db=db)
         return True
 
     # ---- history -----------------------------------------------------------------------------------

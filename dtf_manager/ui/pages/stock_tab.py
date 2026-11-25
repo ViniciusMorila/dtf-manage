@@ -5,7 +5,7 @@ Only shows data and emits signals; the StockController decides everything."""
 from PySide6.QtCore import QRectF, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
-    QAbstractItemDelegate, QAbstractItemView, QFrame, QHBoxLayout, QHeaderView, QLabel,
+    QAbstractItemDelegate, QAbstractItemView, QCheckBox, QFrame, QMenu, QToolButton, QWidgetAction, QHBoxLayout, QHeaderView, QLabel,
     QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -182,7 +182,9 @@ class StockTab(QWidget):
     new_color_requested = Signal()
     new_size_requested = Signal()
     delete_color_requested = Signal(int)             # color id, or -1 = ask which one
+    delete_size_requested = Signal(int)              # size id, or -1 = ask which one
     bulk_requested = Signal()
+    clear_future_requested = Signal()
     history_requested = Signal()
     stock_edit_requested = Signal(int, int, str)     # color id, size id, typed text
     separated_changed = Signal(int, int, bool)
@@ -196,6 +198,7 @@ class StockTab(QWidget):
         self._structure = None
         self._total_row = -1
         self._separation_keys: list[tuple[int, int]] = []
+        self._hidden_color_ids: set[int] = set()     # colors the user unchecked in the separation filter
         outer = QVBoxLayout(self)
         outer.setContentsMargins(18, 16, 18, 16)
         outer.setSpacing(14)
@@ -240,13 +243,17 @@ class StockTab(QWidget):
         buttons.setSpacing(8)
         for attribute, text, signal in (
             ("new_color_button", "Nova cor", self.new_color_requested),
-            ("new_size_button", "Novo tamanho", self.new_size_requested),
             ("delete_color_button", "Excluir cor", None),
+            ("new_size_button", "Novo tamanho", self.new_size_requested),
+            ("delete_size_button", "Excluir tamanho", "size"),
             ("bulk_button", "Adicionar estoque em massa", self.bulk_requested),
+            ("clear_future_button", "Limpar futuro", self.clear_future_requested),
         ):
             button = QPushButton(text)
             if signal is None:
                 button.clicked.connect(lambda: self.delete_color_requested.emit(-1))
+            elif signal == "size":
+                button.clicked.connect(lambda: self.delete_size_requested.emit(-1))
             else:
                 button.clicked.connect(signal)
             setattr(self, attribute, button)
@@ -298,7 +305,18 @@ class StockTab(QWidget):
         right.setSpacing(10)
         title = QLabel("SEPARAÇÃO")
         title.setObjectName("sectionTitle")
-        right.addWidget(title)
+        header = QHBoxLayout()
+        header.addWidget(title)
+        header.addStretch(1)
+        self.color_filter_button = QToolButton()
+        self.color_filter_button.setText("Cores ▾")
+        self.color_filter_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.color_filter_menu = QMenu(self.color_filter_button)
+        self.color_filter_button.setMenu(self.color_filter_menu)
+        self.color_filter_button.hide()
+        self._color_checks: dict[int, QCheckBox] = {}
+        header.addWidget(self.color_filter_button)
+        right.addLayout(header)
         self.separation_stack = QStackedWidget()
         self.empty_label = QLabel("Importe uma planilha na aba DTF para ver o que separar.")
         self.empty_label.setObjectName("emptyState")
@@ -338,6 +356,7 @@ class StockTab(QWidget):
             self._fill_cards(snapshot)
             self._fill_matrix(snapshot)
             self._fill_separation(snapshot)
+            self._fill_color_filter(snapshot)
             self._fill_pending(snapshot)
             self.note_label.setText(snapshot.note)
             self.note_label.setVisible(bool(snapshot.note))
@@ -513,9 +532,75 @@ class StockTab(QWidget):
                                 else Qt.CheckState.Unchecked)
             check.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row, 4, check)
+            # The whole row wears the shirt's color (bege row is beige, marrom is brown, ...).
+            background, text = shirt_colors(entry.color)
+            for column in (0, 1, 2, 3, 4):
+                cell = table.item(row, column)
+                cell.setBackground(QBrush(background))
+                if column != 3:
+                    cell.setForeground(QBrush(text))
+            if background.lightness() > 140:      # the ✓/✗ needs darker tones on light shirts
+                mark.setForeground(QBrush(QColor("#1d7a45") if covered else QColor("#b3202e")))
         del blocker
         self.separation_stack.setCurrentWidget(
             self.separation_table if snapshot.separation else self.empty_label)
+
+    # ---- separation color filter ---------------------------------------------------------------
+    def _fill_color_filter(self, snapshot) -> None:
+        """One checkbox per color that appears in the separation; unchecked colors are hidden."""
+        colors: dict[int, str] = {}
+        for entry in snapshot.separation:
+            colors.setdefault(entry.color_id, entry.color)
+        self._hidden_color_ids &= set(colors)            # forget colors that are gone
+        menu = self.color_filter_menu
+        menu.clear()
+        self._color_checks = {}
+        self.color_filter_button.setVisible(len(colors) > 1)
+        if len(colors) <= 1:
+            self._hidden_color_ids.clear()
+        else:
+            self._add_filter_row("Todas as cores", None, all(c not in self._hidden_color_ids for c in colors))
+            menu.addSeparator()
+            for color_id, name in colors.items():
+                self._add_filter_row(name, color_id, color_id not in self._hidden_color_ids)
+        self._apply_color_filter()
+
+    def _add_filter_row(self, text: str, color_id, checked: bool) -> None:
+        box = QCheckBox(text)
+        box.setChecked(checked)
+        box.setStyleSheet("QCheckBox { padding: 5px 14px; }")
+        if color_id is None:
+            box.toggled.connect(self._all_colors_toggled)
+            self._all_box = box
+        else:
+            box.toggled.connect(lambda on, cid=color_id: self._color_toggled(cid, on))
+            self._color_checks[color_id] = box
+        action = QWidgetAction(self.color_filter_menu)
+        action.setDefaultWidget(box)
+        self.color_filter_menu.addAction(action)
+
+    def _color_toggled(self, color_id: int, on: bool) -> None:
+        (self._hidden_color_ids.discard if on else self._hidden_color_ids.add)(color_id)
+        blocker = QSignalBlocker(self._all_box)
+        self._all_box.setChecked(not self._hidden_color_ids)
+        del blocker
+        self._apply_color_filter()
+
+    def _all_colors_toggled(self, on: bool) -> None:
+        self._hidden_color_ids = set() if on else set(self._color_checks)
+        for box in self._color_checks.values():
+            blocker = QSignalBlocker(box)
+            box.setChecked(on)
+            del blocker
+        self._apply_color_filter()
+
+    def _apply_color_filter(self) -> None:
+        """Hides rows only (never rebuilds them), so the "separado" marks stay as they are."""
+        for row, (color_id, _) in enumerate(self._separation_keys):
+            self.separation_table.setRowHidden(row, color_id in self._hidden_color_ids)
+        hidden = len(self._hidden_color_ids)
+        self.color_filter_button.setText(f"Cores ({hidden} oculta{'s' if hidden > 1 else ''}) ▾"
+                                         if hidden else "Cores ▾")
 
     def _fill_pending(self, snapshot) -> None:
         table = self.pending_table

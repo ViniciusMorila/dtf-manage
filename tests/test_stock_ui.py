@@ -49,6 +49,8 @@ class FakePrompts:
         self.bulk_answer = None
         self.history_calls = []
         self.delete_choice, self.delete_confirm, self.delete_confirms = None, True, []
+        self.size_choice, self.size_confirms = None, []
+        self.clear_future_answer, self.clear_future_asked = True, []
 
     def choose_color(self, colors):
         return self.delete_choice
@@ -56,6 +58,17 @@ class FakePrompts:
     def confirm_delete_color(self, name, stock, future):
         self.delete_confirms.append((name, stock, future))
         return self.delete_confirm
+
+    def choose_size(self, sizes):
+        return self.size_choice
+
+    def confirm_delete_size(self, name, stock, future):
+        self.size_confirms.append((name, stock, future))
+        return self.delete_confirm
+
+    def confirm_clear_future(self, what):
+        self.clear_future_asked.append(what)
+        return self.clear_future_answer
 
     def ask_name(self, title, label):
         return self.names.pop(0) if self.names else None
@@ -230,6 +243,52 @@ class TabTests(ControllerBase):
         self.assertLess(self.tab.matrix.rowCount(), rows_before)
         self.assertNotIn("Verde", [c.name for c in self.service.snapshot().colors])
 
+    def test_the_buttons_are_ordered_color_pair_then_size_pair(self):
+        from PySide6.QtWidgets import QPushButton
+        wanted = [self.tab.new_color_button, self.tab.delete_color_button,
+                  self.tab.new_size_button, self.tab.delete_size_button]
+        row = self.tab.findChildren(QPushButton)                            # creation order = layout order
+        self.assertEqual([b for b in row if b in wanted], wanted)
+        self.assertLess(row.index(wanted[1]), row.index(self.tab.bulk_button))
+        self.assertEqual(self.tab.delete_size_button.text(), "Excluir tamanho")
+
+    def test_delete_size_button_asks_which_size_confirms_and_logs(self):
+        self.prompts.names = ["XG"]
+        self.controller.new_size()
+        xg = ids(self.service)[1]["XG"]
+        green_stock = self.colors["Preta"]
+        self.service.set_stock(green_stock, xg, "4")
+        self.controller.refresh()
+        columns_before = [s.name for s in self.service.snapshot().sizes]
+        self.prompts.size_choice = None                                     # cancelled at the list
+        self.tab.delete_size_button.click()
+        self.assertEqual([s.name for s in self.service.snapshot().sizes], columns_before)
+        self.prompts.size_choice, self.prompts.delete_confirm = xg, False
+        self.tab.delete_size_button.click()                                 # declined
+        self.assertEqual(self.prompts.size_confirms[-1], ("XG", 4, 0))
+        self.assertIn("XG", [s.name for s in self.service.snapshot().sizes])
+        self.prompts.delete_confirm = True
+        self.tab.delete_size_button.click()
+        self.assertNotIn("XG", [s.name for s in self.service.snapshot().sizes])
+        self.assertEqual(stock_of(self.service, "Preta", "G"), 0)           # other sizes untouched
+        self.assertTrue(any("Tamanho excluído" in str(m) for m in self.service.movements()))
+
+    def test_deleting_a_size_drops_its_futuro_and_keeps_other_sizes(self):
+        self.service.set_stock(self.colors["Preta"], self.sizes["G"], "5")
+        self.run_import(self.orders(n=3, variation="Preta,G"))
+        self.controller.refresh()
+        self.assertEqual(self.cell("future", "Preta", "G").text(), "3")
+        self.tab.delete_size_requested.emit(self.sizes["G"])
+        self.assertEqual(self.prompts.size_confirms[-1], ("G", 5, 3))
+        self.assertNotIn("G", [s.name for s in self.service.snapshot().sizes])
+        self.assertIn("M", [s.name for s in self.service.snapshot().sizes])
+        self.assertFalse(self.service.snapshot().has_future)
+
+    def test_delete_size_signal_for_a_missing_size_only_warns(self):
+        self.tab.delete_size_requested.emit(9999)
+        self.assertEqual(self.prompts.size_confirms, [])
+        self.assertTrue(any("não existe" in text for text in self.prompts.warnings))
+
     def test_delete_color_signal_with_an_id_skips_the_list(self):
         green = self.service.add_color("Verde").id
         self.controller.refresh()
@@ -265,6 +324,46 @@ class TabTests(ControllerBase):
         table.item(preta, 4).setCheckState(Qt.CheckState.Checked)
         table.item(bege, 4).setCheckState(Qt.CheckState.Checked)       # checkable on every row
         self.assertEqual(sum(r.separated for r in self.service.snapshot().separation), 2)
+
+    def test_separation_rows_wear_the_shirt_color(self):
+        from dtf_manager.ui.pages.stock_tab import shirt_colors
+        self.service.set_stock(self.colors["Preta"], self.sizes["G"], "2")
+        self.run_import(self.orders(n=1, variation="Preta,G") + [make_order("X", ("Bege,M", 1)),
+                                                                 make_order("Y", ("Marrom,P", 1))])
+        self.controller.refresh()
+        table = self.tab.separation_table
+        rows = {table.item(r, 0).text(): r for r in range(table.rowCount())}
+        for name in ("Preta", "Bege", "Marrom"):
+            background, text = shirt_colors(name)
+            for column in (0, 1, 2, 4):                                  # the whole row, mark included below
+                self.assertEqual(table.item(rows[name], column).background().color(), background, (name, column))
+            self.assertEqual(table.item(rows[name], 3).background().color(), background)
+            self.assertEqual(table.item(rows[name], 0).foreground().color(), text)
+        self.assertNotEqual(shirt_colors("Bege")[0], shirt_colors("Marrom")[0])
+        # On the light beige row the missing mark gets a darker red so it can be read.
+        self.assertEqual(table.item(rows["Bege"], 3).text(), "✗")
+        self.assertNotEqual(table.item(rows["Bege"], 3).foreground().color(), NEGATIVE)
+
+    def test_separation_color_filter_hides_unchecked_colors_and_keeps_marks(self):
+        self.service.set_stock(self.colors["Preta"], self.sizes["G"], "2")
+        self.run_import(self.orders(n=1, variation="Preta,G") + [make_order("X", ("Bege,M", 1)),
+                                                                 make_order("Y", ("Marrom,P", 1))])
+        self.controller.refresh()
+        table, tab = self.tab.separation_table, self.tab
+        names = lambda: [table.item(r, 0).text() for r in range(table.rowCount()) if not table.isRowHidden(r)]
+        self.assertFalse(tab.color_filter_button.isHidden())
+        self.assertEqual(sorted(names()), ["Bege", "Marrom", "Preta"])
+        bege_row = next(r for r in range(table.rowCount()) if table.item(r, 0).text() == "Bege")
+        table.item(bege_row, 4).setCheckState(Qt.CheckState.Checked)       # separated mark
+        ids = {table.item(r, 0).text(): tab._separation_keys[r][0] for r in range(table.rowCount())}
+        tab._color_checks[ids["Marrom"]].setChecked(False)
+        self.assertEqual(sorted(names()), ["Bege", "Preta"])
+        self.assertFalse(tab._all_box.isChecked())
+        self.controller.refresh()                                           # the choice survives a refresh
+        self.assertEqual(sorted(names()), ["Bege", "Preta"])
+        tab._all_box.setChecked(True)
+        self.assertEqual(sorted(names()), ["Bege", "Marrom", "Preta"])
+        self.assertEqual(tab.color_filter_button.text(), "Cores ▾")
 
     def test_separation_empty_state_is_centered(self):
         self.assertIs(self.tab.separation_stack.currentWidget(), self.tab.empty_label)
@@ -647,6 +746,62 @@ class FinalizeFlowTests(ControllerBase):
         again = StockController(make_service(self.path)[0], FakePrompts(), StockTab())
         self.assertFalse(again.has_future)
         self.assertEqual(again.service.snapshot().stock[(self.colors["Preta"], self.sizes["G"])], 8)
+
+
+class ClearFutureTests(ControllerBase):
+    def with_future(self):
+        self.service.set_stock(self.colors["Preta"], self.sizes["G"], "2")
+        self.run_import(self.orders(n=4, variation="Preta,G"))
+        self.controller.refresh()
+        self.assertTrue(self.service.snapshot().has_future)
+
+    def test_the_button_is_on_the_shirt_tab(self):
+        self.assertEqual(self.tab.clear_future_button.text(), "Limpar futuro")
+
+    def test_it_zeroes_the_futuro_but_never_the_stock(self):
+        self.with_future()
+        self.tab.clear_future_button.click()
+        self.assertEqual(self.prompts.clear_future_asked, ["camisetas"])
+        snapshot = self.service.snapshot()
+        self.assertFalse(snapshot.has_future)
+        self.assertEqual(stock_of(self.service, "Preta", "G"), 2)         # stock untouched
+        self.assertEqual(self.cell("future", "Preta", "G").text(), "0")
+
+    def test_the_user_can_refuse(self):
+        self.with_future()
+        self.prompts.clear_future_answer = False
+        self.assertFalse(self.controller.clear_future())
+        self.assertTrue(self.service.snapshot().has_future)
+
+    def test_with_nothing_to_clear_it_only_says_so(self):
+        self.assertFalse(self.controller.clear_future())
+        self.assertEqual(self.prompts.clear_future_asked, [])
+        self.assertTrue(any("Não há futuro" in text for text in self.prompts.infos))
+
+    def test_the_clearing_is_logged_in_the_history(self):
+        self.with_future()
+        self.controller.clear_future()
+        self.assertTrue(any("Futuro limpo" in str(m) for m in self.service.movements()))
+
+    def test_importing_the_same_spreadsheet_again_counts_the_futuro_again(self):
+        orders = self.orders(n=4, variation="Preta,G")
+        self.service.set_stock(self.colors["Preta"], self.sizes["G"], "2")
+        self.run_import(orders)
+        self.controller.clear_future()
+        self.run_import(orders)                                          # same orders again
+        self.assertTrue(self.service.snapshot().has_future)
+        self.assertEqual(self.cell("future", "Preta", "G").text(), "4")
+
+    def test_finalizing_emits_finalized_only_when_it_really_happened(self):
+        self.with_future()
+        done = []
+        self.controller.finalized.connect(lambda: done.append(True))
+        self.prompts.finalize_answer = False
+        self.controller.finalize()
+        self.assertEqual(done, [])                                       # the user declined
+        self.prompts.finalize_answer = True
+        self.controller.finalize()
+        self.assertEqual(done, [True])
 
 
 class DialogTests(ControllerBase):

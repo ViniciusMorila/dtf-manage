@@ -58,6 +58,8 @@ QPushButton#primaryButton, QPushButton#addButton { background: @WINE@; border: 1
 QPushButton#primaryButton:hover, QPushButton#addButton:hover { background: @WINE_HOVER@; border-color: @WINE_HOVER@; }
 QPushButton#primaryButton:pressed, QPushButton#addButton:pressed { background: @WINE_PRESSED@; border-color: @WINE_PRESSED@; }
 QPushButton#primaryButton:disabled, QPushButton#addButton:disabled { background: @WINE_SOFT@; border-color: @BORDER@; color: @DISABLED@; }
+QPushButton#trashButton { background: transparent; border: none; padding: 0; min-height: 0; font-size: 15px; }
+QPushButton#trashButton:hover { background: #3a0d17; border-radius: 6px; }
 QPushButton#exportButton { background: @WINE@; border: 1px solid @WINE@; color: @ON_WINE@; min-height: 22px; }
 QPushButton#exportButton:hover { background: @WINE_HOVER@; border-color: @WINE_HOVER@; }
 QPushButton#exportButton:pressed { background: @WINE_PRESSED@; border-color: @WINE_PRESSED@; }
@@ -80,9 +82,9 @@ QCheckBox::indicator:checked { background: @WINE@; border-color: @WINE@; }
 QScrollArea { border: 0; background: transparent; }
 QScrollArea QWidget#qt_scrollarea_viewport, QScrollArea > QWidget > QWidget { background: transparent; }
 QScrollBar:vertical, QScrollBar:horizontal { background: @PANEL@; margin: 2px; }
-QScrollBar:vertical { width: 8px; }
-QScrollBar:horizontal { height: 8px; }
-QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: @BORDER@; min-height: 30px; min-width: 30px; border-radius: 4px; }
+QScrollBar:vertical { width: 14px; }
+QScrollBar:horizontal { height: 14px; }
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: @BORDER@; min-height: 40px; min-width: 40px; border-radius: 5px; }
 QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { background: @WINE@; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
 QFrame#artCard { background: @PANEL@; border: 1px solid @BORDER@; border-radius: 8px; }

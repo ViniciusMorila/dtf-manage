@@ -33,6 +33,7 @@ class ArtStockController(QObject):
         self._recalc_scheduled = False
         self._manual: dict[str, int] = {}     # arts added by hand on the roll: path -> copies
         self._had_manual = False
+        self._future_cleared = False          # the user cleared the futuro: orders no longer feed it
         self._applied: dict[str, int] = {}    # hand-added copies already inside the stored futuro
         self.identical_groups: list[list[str]] = []
         if scanner is not None:
@@ -43,6 +44,7 @@ class ArtStockController(QObject):
             tab.move_requested.connect(self.move_stock)
             tab.suggest_requested.connect(self.suggest_matches)
             tab.copy_missing_requested.connect(self.copy_missing)
+            tab.clear_future_requested.connect(self.clear_future)
 
     # ---- folder and view ---------------------------------------------------------------
     @property
@@ -97,9 +99,13 @@ class ArtStockController(QObject):
     def recalculate(self, reset_marks: bool = False) -> bool:
         """Replaces the arts futuro with the copies of the linked items of the counted orders.
         Skipped while no order is loaded (cancel/finalize clear the futuro on their own)."""
+        if reset_marks:
+            self._future_cleared = False       # a new import counts again
         loaded = list(self._orders())
         counted = json.loads(self.service.stock_repository.get_state("counted_orders", "[]") or "[]")
-        if not loaded and counted:
+        if self._future_cleared:
+            count = self._with_manual(ArtCopyCount({}, 0, 0))     # only the hand-added copies remain
+        elif not loaded and counted:
             # An operation is pending but its orders are not loaded (app reopened, "Continuar" not
             # pressed yet): keep its futuro as it is and only add/remove the hand-added copies.
             if not self._manual and not self._applied:
@@ -165,7 +171,23 @@ class ArtStockController(QObject):
         self._manual = {}
         self._applied = {}
         self._had_manual = False
+        self._future_cleared = False
         self.manual_consumed.emit()
+
+    def clear_future(self) -> bool:
+        """"Limpar futuro" of the art tab: asks first, then zeroes the arts' futuro (stock untouched)."""
+        if not self.service.has_future():
+            self.prompts.info("Limpar futuro", "Não há futuro de estampas para limpar.")
+            return False
+        if not self.prompts.confirm_clear_future("estampas"):
+            return False
+        self._future_cleared = True
+        self._applied = {}
+        self._had_manual = False
+        self.service.replace_future(ArtCopyCount({}, 0, 0), note="Futuro limpo")
+        self.refresh()
+        self.changed.emit()
+        return True
 
     def schedule_recalc(self) -> None:
         """Called on every change of the orders/links: coalesces bursts into one recalculation."""

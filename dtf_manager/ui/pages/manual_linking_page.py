@@ -31,6 +31,7 @@ class ManualLinkingPage(QWidget):
     back_requested = Signal()
     session_completed = Signal(int)
     checkpoint_requested = Signal()
+    review_completed = Signal(int)         # how many products the review changed
 
     def __init__(self, state: OrderImportState, memory_service: ArtLinkMemoryService, parent=None):
         super().__init__(parent)
@@ -39,6 +40,8 @@ class ManualLinkingPage(QWidget):
         self._memory_service = memory_service
         self._queue = ManualLinkQueue(())
         self._single_mode = False
+        self._review_mode = False              # REVISÃO: walks over the products already linked
+        self._review_changed = 0
         self._session_active = False
         self._draft: list[LinkedArt | None] = []
         self._saved_draft: list[LinkedArt] = []
@@ -65,7 +68,7 @@ class ManualLinkingPage(QWidget):
         back = QPushButton("← VOLTAR")
         back.clicked.connect(self._back)
         header.addWidget(back)
-        title = QLabel("VINCULAÇÃO MANUAL")
+        title = self.title_label = QLabel("VINCULAÇÃO MANUAL")
         title.setObjectName("sectionTitle")
         header.addWidget(title)
         header.addStretch()
@@ -175,7 +178,28 @@ class ManualLinkingPage(QWidget):
         label.setObjectName("panelTitle")
         return label
 
+    def _set_review_mode(self, enabled: bool) -> None:
+        self._review_mode = enabled
+        self._review_changed = 0
+        self.title_label.setText("REVISÃO DOS VÍNCULOS" if enabled else "VINCULAÇÃO MANUAL")
+
+    def start_review(self, item_ids: tuple[str, ...]) -> None:
+        """REVISÃO: the products already linked, one by one; edit if needed, save and go to the next."""
+        self._single_mode = False
+        self._set_review_mode(True)
+        self._session_active = False                       # never resumed as a linking queue
+        self._queue = ManualLinkQueue(tuple(item_ids))
+        self._linked_in_session.clear()
+        self._skipped_item_ids.clear()
+        self._last_saved_arts.clear()
+        self._session_ids = tuple(item_ids)
+        if self._current_item() is None:
+            self.review_completed.emit(0)
+            return
+        self._load_current()
+
     def start_queue(self, item_ids: tuple[str, ...], start_item_id: str | None = None) -> None:
+        self._set_review_mode(False)
         self._single_mode = False
         self._session_active = True
         self._queue = ManualLinkQueue(item_ids, start_item_id)
@@ -193,6 +217,7 @@ class ManualLinkingPage(QWidget):
         return (
             self._session_active
             and not self._single_mode
+            and not self._review_mode
             and self._queue.current_item_id is not None
             and self._state.find_item(self._queue.current_item_id) is not None
         )
@@ -216,6 +241,8 @@ class ManualLinkingPage(QWidget):
         return tuple(pending)
 
     def _has_pending_after_current(self) -> bool:
+        if self._review_mode:
+            return not self._queue.is_last
         ids = self._queue.item_ids
         for item_id in ids[self._queue.index + 1:]:
             item = self._state.find_item(item_id)
@@ -224,6 +251,8 @@ class ManualLinkingPage(QWidget):
         return False
 
     def _seek_next_unlinked(self, include_current: bool = False) -> bool:
+        if self._review_mode:                              # every product of the review, in order
+            return self._current_item() is not None if include_current else self._queue.advance()
         if not include_current and not self._queue.advance():
             return False
         while True:
@@ -241,7 +270,7 @@ class ManualLinkingPage(QWidget):
             self._clear_suggestions()
 
     def session_snapshot(self) -> ManualLinkingSessionSnapshot | None:
-        if not self._queue.item_ids:
+        if not self._queue.item_ids or self._review_mode:
             return None
         return ManualLinkingSessionSnapshot(
             queue_item_ids=tuple(self._queue.item_ids),
@@ -255,6 +284,7 @@ class ManualLinkingPage(QWidget):
         valid_ids = tuple(item_id for item_id in snapshot.queue_item_ids if self._state.find_item(item_id))
         if not valid_ids:
             return False
+        self._set_review_mode(False)
         self._single_mode = snapshot.mode == "single"
         self._session_active = not self._single_mode
         self._queue = ManualLinkQueue(valid_ids, snapshot.current_item_id)
@@ -266,6 +296,7 @@ class ManualLinkingPage(QWidget):
         return True
 
     def start_single(self, item_id: str) -> None:
+        self._set_review_mode(False)
         self._single_mode = True
         self._queue = ManualLinkQueue((item_id,))
         self._linked_in_session.clear()
@@ -295,13 +326,14 @@ class ManualLinkingPage(QWidget):
         total = len(self._session_ids)
         current_id = self._queue.current_item_id
         position = self._session_ids.index(current_id) + 1 if current_id in self._session_ids else 0
+        prefix = "Revisão · " if self._review_mode else ""
         self.position_label.setText(
-            "" if self._single_mode or not total else f"Produto {position} de {total}")
+            "" if self._single_mode or not total else f"{prefix}Produto {position} de {total}")
         self.session_progress.setVisible(not self._single_mode)
         self.session_progress.setValue(round(position / total * 100) if total else 0)
         self.previous_button.setVisible(not self._single_mode)
         self.previous_button.setEnabled(position > 1)
-        self.skip_button.setVisible(not self._single_mode)
+        self.skip_button.setVisible(not self._single_mode and not self._review_mode)   # review: only SALVAR
         last = not self._has_pending_after_current()
         self.save_button.setText(
             "SALVAR ALTERAÇÕES" if self._single_mode else
@@ -414,7 +446,11 @@ class ManualLinkingPage(QWidget):
 
     def eventFilter(self, watched, event) -> bool:
         scroll = getattr(self, "suggestions_scroll", None)     # events can arrive while the page is still being built
-        if isinstance(watched, QWidget) and scroll is not None and scroll.isVisible():
+        try:
+            scroll_visible = scroll is not None and scroll.isVisible()
+        except RuntimeError:                                    # the page is being destroyed
+            return False
+        if isinstance(watched, QWidget) and scroll_visible:
             if event.type() == QEvent.Type.Enter and self._is_suggestions_widget(watched):
                 self._pointer_entered_list = True
             elif event.type() == QEvent.Type.Leave and watched is self.suggestions_scroll:
@@ -542,10 +578,11 @@ class ManualLinkingPage(QWidget):
         if item is None:
             return
         arts = self._valid_draft()
-        if not arts and not self._single_mode and item.link_status == "unlinked":
+        if not arts and not self._single_mode:
             QMessageBox.information(
                 self, "Vinculação manual",
-                "Escolha pelo menos uma arte ou use PULAR POR ENQUANTO.",
+                "Escolha pelo menos uma arte ou use PULAR POR ENQUANTO."
+                if not self._review_mode else "Escolha pelo menos uma arte para este produto.",
             )
             return
         try:
@@ -561,6 +598,8 @@ class ManualLinkingPage(QWidget):
                 "Memória de vínculos",
                 "Vínculo salvo, mas não foi possível adicioná-lo à memória.",
             )
+        if self._review_mode and list(updated.linked_arts) != list(item.linked_arts):
+            self._review_changed += 1
         if item.link_status == "unlinked" and updated.link_status == "linked":
             self._linked_in_session.add(item.id)
             self._skipped_item_ids.discard(item.id)
@@ -576,7 +615,7 @@ class ManualLinkingPage(QWidget):
     def _skip(self) -> None:
         if not self.confirm_can_leave():
             return
-        if self._queue.current_item_id:
+        if self._queue.current_item_id and not self._review_mode:
             self._skipped_item_ids.add(self._queue.current_item_id)
         self._advance_or_finish()
 
@@ -587,7 +626,10 @@ class ManualLinkingPage(QWidget):
         else:
             self._session_active = False
             self.checkpoint_requested.emit()
-            self.session_completed.emit(len(self._linked_in_session))
+            if self._review_mode:
+                self.review_completed.emit(self._review_changed)
+            else:
+                self.session_completed.emit(len(self._linked_in_session))
 
     def _previous(self) -> None:
         """Back to the previous product of the session (the ones already linked are not shown)."""

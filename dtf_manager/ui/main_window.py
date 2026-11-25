@@ -43,11 +43,13 @@ from dtf_manager.services.import_history_analyzer import analyze_imported_orders
 from dtf_manager.services.active_operation_repository import ActiveOperationStorageError
 from dtf_manager.services.sqlite_active_operation_repository import SqliteActiveOperationRepository
 from dtf_manager.services.sqlite_database import DTFDatabase
+from dtf_manager.services.export_history_repository import ExportHistoryRepository, ExportRecord
 from dtf_manager.services.processed_order_repository import ProcessedOrderRepository
 from dtf_manager.services.active_operation_service import (
     build_import_operation_fingerprint, checkpoint_operation, create_active_operation,
 )
 from dtf_manager.ui.widgets.existing_operation_dialog import ExistingOperationDialog
+from dtf_manager.ui.widgets.export_history_dialog import ExportHistoryDialog
 from dtf_manager.core.stock_controller import StockController
 from dtf_manager.services.stock_repository import StockRepository
 from dtf_manager.services.stock_service import StockService
@@ -263,10 +265,12 @@ class MainWindow(QMainWindow):
         settings.setFixedWidth(330)
         settings.export_requested.connect(self._start_export)
         settings.regroup_requested.connect(lambda: self.roll_view.regroup_artworks())
+        settings.history_requested.connect(self._show_export_history)
         settings.add_artwork_requested.connect(lambda: self._add_artwork(artwork, settings.folder_path))
         settings.import_orders_requested.connect(self._import_orders)
         settings.finalize_requested.connect(self.stock_controller.finalize)
         self.stock_controller.changed.connect(settings.set_finalize_enabled)
+        self.stock_controller.finalized.connect(self._on_order_finalized)
         self.art_controller.changed.connect(
             lambda: settings.set_finalize_enabled(self.stock_controller.has_future))
         settings.folder_selected.connect(self.art_controller.set_folder)
@@ -327,6 +331,7 @@ class MainWindow(QMainWindow):
         self.orders_dashboard.import_requested.connect(self._import_orders)
         self.orders_dashboard.automatic_link_requested.connect(self._automatic_link_orders)
         self.orders_dashboard.manual_link_requested.connect(self._open_manual_queue)
+        self.orders_dashboard.review_requested.connect(self._open_review)
         self.orders_dashboard.item_edit_requested.connect(self._open_manual_item)
         self.orders_dashboard.build_order_requested.connect(self._build_imported_order_roll)
         self.pages.addWidget(self.orders_dashboard)
@@ -337,6 +342,7 @@ class MainWindow(QMainWindow):
         settings.folder_selected.connect(self.manual_linking_page.set_artwork_folder)
         self.manual_linking_page.back_requested.connect(self._leave_manual_linking)
         self.manual_linking_page.session_completed.connect(self._finish_manual_session)
+        self.manual_linking_page.review_completed.connect(self._finish_review)
         self.manual_linking_page.checkpoint_requested.connect(
             lambda: self._checkpoint_current_operation("manual_linking")
         )
@@ -467,6 +473,24 @@ class MainWindow(QMainWindow):
         self._refresh_active_operation_card()
         self.pages.setCurrentWidget(self.editor_page)
 
+    def _continue_keeping_the_import(self) -> None:
+        """CONTINUAR after importing the same file: the operation is resumed and the import the user
+        just accepted also redoes the futuro (it replaces the old one, never adds to it)."""
+        decision = self._pending_stock_import              # resuming the operation forgets it
+        self._continue_active_operation()
+        if decision is not None:
+            self.stock_controller.apply_import(decision)
+
+    def _on_order_finalized(self) -> None:
+        """FINALIZAR PEDIDO done: the operation is over, so its card goes away until a spreadsheet
+        is imported again. The mounted roll stays on screen."""
+        if self.active_operation is None:
+            return
+        try:
+            self._end_active_operation()
+        except ActiveOperationStorageError as error:
+            self.statusBar().showMessage(str(error), 15000)
+
     def _cancel_active_operation(self) -> None:
         """Cancel: drops this spreadsheet's work so it can be imported again from zero."""
         operation = self.active_operation
@@ -538,6 +562,26 @@ class MainWindow(QMainWindow):
         else:
             self.pages.setCurrentWidget(self.orders_dashboard)
             self._checkpoint_current_operation("orders_dashboard")
+
+    def _open_review(self) -> None:
+        """REVISÃO: every product already linked, one by one, then back to the order screen."""
+        linked_ids = tuple(item.id for item in self.order_import_state.all_items
+                           if item.link_status == "linked")
+        if not linked_ids:
+            QMessageBox.information(self, "Revisão", "Ainda não há produtos vinculados para revisar.")
+            return
+        self._return_to_production_review = False
+        self.pages.setCurrentWidget(self.manual_linking_page)
+        self.manual_linking_page.start_review(linked_ids)
+        self._checkpoint_current_operation("manual_linking")
+
+    def _finish_review(self, changed_count: int) -> None:
+        self.pages.setCurrentWidget(self.orders_dashboard)
+        self._checkpoint_current_operation("orders_dashboard")
+        self.orders_dashboard.refresh()
+        QMessageBox.information(
+            self, "Revisão concluída",
+            f"Revisão concluída. Produtos alterados: {changed_count}\nPode montar o pedido.")
 
     def _finish_manual_session(self, linked_count: int) -> None:
         self._return_to_production_review = False
@@ -659,16 +703,10 @@ class MainWindow(QMainWindow):
                     self, "Histórico de lotes",
                     "O rolo foi montado, mas não foi possível salvar o registro no histórico.",
                 )
+            # The operation stays active after the roll is mounted: if the system closes, it can be
+            # continued or cancelled, and a new roll can be mounted from it. FINALIZAR PEDIDO ends it.
             if self.active_operation is not None:
-                if not get_unlinked_items(self.order_import_state.all_items):
-                    try:
-                        self.active_operation_repository.clear_active()
-                        self.active_operation = None
-                        self._refresh_active_operation_card()
-                    except ActiveOperationStorageError as error:
-                        self.statusBar().showMessage(str(error), 15000)
-                else:
-                    self._checkpoint_current_operation("orders_dashboard")
+                self._checkpoint_current_operation("orders_dashboard")
         except PrintPlanValidationError as error:
             QMessageBox.warning(self, "Montar pedido", str(error))
         except (OSError, ValueError):
@@ -855,7 +893,7 @@ class MainWindow(QMainWindow):
             dialog = ExistingOperationDialog(active, self)
             dialog.exec()
             if dialog.choice == ExistingOperationDialog.CONTINUE:
-                self._continue_active_operation()
+                self._continue_keeping_the_import()
             elif dialog.choice == ExistingOperationDialog.RESTART:
                 self.active_operation_repository.clear_active()
                 self.active_operation = None
@@ -989,6 +1027,30 @@ class MainWindow(QMainWindow):
         self.settings.start_export()
         self._export_timer.start()
 
+    def _export_history_repository(self):
+        """Created on first use, so building the window never touches the history file."""
+        if getattr(self, "_export_history", None) is None:
+            self._export_history = ExportHistoryRepository.default()
+        return self._export_history
+
+    def _record_export_history(self) -> None:
+        """One line per finished export: day, length used and project value."""
+        used_meters = self.roll_view.sceneRect().height() / 1000.0
+        record = ExportRecord.new(
+            self._export_file_name, used_meters, self.settings.cost_input.value(),
+            parts=len(self._output_paths))
+        try:
+            self._export_history_repository().add(record)
+        except OSError:
+            self.statusBar().showMessage("Exportado, mas não foi possível registrar no histórico.", 8000)
+
+    def _show_export_history(self) -> None:
+        repository = self._export_history_repository()
+        if repository.load_warning:
+            self.statusBar().showMessage(repository.load_warning, 8000)
+        ExportHistoryDialog(repository.list_all(), self, clear_callback=repository.clear,
+                            remove_callback=repository.remove).exec()
+
     def _advance_export(self) -> None:
         self._export_progress = min(100, self._export_progress + 5)
         stage_name = "Renderizando projeto" if self._export_stage == 1 else "Salvando projeto"
@@ -1020,6 +1082,7 @@ class MainWindow(QMainWindow):
             self.settings.update_export_progress(0, "Salvando projeto")
             return
         self._export_timer.stop()
+        self._record_export_history()
         self.settings.finish_export(self._output_paths)
 
 

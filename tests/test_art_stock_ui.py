@@ -367,6 +367,50 @@ class SeparationTests(Base):
         self.assertTrue(any("copiada" in t for t in self.prompts.infos))
 
 
+class ClearArtFutureTests(Base):
+    def with_future(self):
+        self.build()
+        a = self.files["a.png"]
+        self.arts.set_stock(row_of(self.arts, "a.png").art_id, "9")
+        self.import_orders([make_order("1", linked_item("1", a, 3))])
+        self.assertEqual(row_of(self.arts, "a.png").future, 3)
+
+    def test_the_button_is_on_the_art_tab(self):
+        self.build()
+        self.assertEqual(self.tab.clear_future_button.text(), "Limpar futuro")
+
+    def test_it_zeroes_the_futuro_and_keeps_the_stock(self):
+        self.with_future()
+        self.tab.clear_future_button.click()
+        self.assertEqual(self.prompts.clear_future_asked, ["estampas"])
+        self.assertEqual(row_of(self.arts, "a.png").future, 0)
+        self.assertEqual(row_of(self.arts, "a.png").stock, 9)
+
+    def test_the_cleared_futuro_does_not_come_back_by_itself(self):
+        self.with_future()
+        self.controller.clear_future()
+        self.controller.recalculate()                                    # e.g. after any link change
+        self.assertEqual(row_of(self.arts, "a.png").future, 0)
+
+    def test_a_new_import_counts_again(self):
+        self.with_future()
+        self.controller.clear_future()
+        self.import_orders([make_order("1", linked_item("1", self.files["a.png"], 3))])
+        self.assertEqual(row_of(self.arts, "a.png").future, 3)
+
+    def test_the_user_can_refuse(self):
+        self.with_future()
+        self.prompts.clear_future_answer = False
+        self.assertFalse(self.controller.clear_future())
+        self.assertEqual(row_of(self.arts, "a.png").future, 3)
+
+    def test_with_nothing_to_clear_it_only_says_so(self):
+        self.build()
+        self.assertFalse(self.controller.clear_future())
+        self.assertEqual(self.prompts.clear_future_asked, [])
+        self.assertTrue(any("Não há futuro" in text for text in self.prompts.infos))
+
+
 class FutureFlowTests(Base):
     def test_importing_replaces_the_futuro_and_unlinked_items_stay_out(self):
         self.build()

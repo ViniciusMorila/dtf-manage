@@ -18,6 +18,7 @@ COLOR_AMBIGUOUS = "ambiguous"  # two possible colors and no way to tell which is
 _SIZE_PART = re.compile(r"^[a-z0-9]{1,4}( ?- ?[a-z0-9]{1,4})*$")
 _PRINT_SUFFIX = re.compile(r"\s*-?\s*\bestampa\b.*$")
 _KIT_PREFIX = re.compile(r"^kit\b\s*-?\s*")
+_SHIRT_WORD = re.compile(r"^camisetas?\s+(?=[a-z0-9]{1,4}\b)")   # "Camiseta P" is just the size P
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +57,8 @@ def _clean_color(part: str) -> tuple[str, bool]:
 def parse_variation(variation: str, known_sizes: set[str]) -> ParsedVariation:
     """`known_sizes` holds normalized size names and aliases."""
     text = normalize_name(variation)
-    parts = [part.strip() for part in text.split(",") if part.strip()]
+    parts = [_SHIRT_WORD.sub("", part.strip()).strip() for part in text.split(",") if part.strip()]
+    parts = [part for part in parts if part]
     if not parts or len(parts) > 2:
         return ParsedVariation(COLOR_MISSING if not parts else COLOR_AMBIGUOUS, "", (), False)
     size_parts = [part for part in parts if _is_size_part(part, known_sizes)]

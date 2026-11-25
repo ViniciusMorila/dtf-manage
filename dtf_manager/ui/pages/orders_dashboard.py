@@ -26,6 +26,7 @@ class OrdersDashboard(QWidget):
     import_requested = Signal()
     automatic_link_requested = Signal()
     manual_link_requested = Signal()
+    review_requested = Signal()
     item_edit_requested = Signal(str)
     build_order_requested = Signal()
 
@@ -131,13 +132,19 @@ class OrdersDashboard(QWidget):
         self.manual_link_button.clicked.connect(
             lambda: self.manual_link_requested.emit()
         )
+        self.review_button = QPushButton("REVISÃO")
+        self.review_button.setObjectName("primaryButton")
+        self.review_button.setToolTip(
+            "Passar por todos os pedidos já vinculados, conferir e corrigir se precisar.")
+        self.review_button.clicked.connect(lambda: self.review_requested.emit())
         self.build_order_button = QPushButton("MONTAR PEDIDO")
         self.build_order_button.setObjectName("exportButton")
         self.build_order_button.clicked.connect(
             lambda: self.build_order_requested.emit()
         )
         # Bottom block: automatic (left) + manual (right); MONTAR PEDIDO below, as wide as the pair.
-        for button in (self.automatic_link_button, self.manual_link_button, self.build_order_button):
+        for button in (self.automatic_link_button, self.manual_link_button, self.review_button,
+                       self.build_order_button):
             button.setProperty("pill", True)
         self.action_block = QWidget()
         self.action_block.setFixedWidth(ACTION_BLOCK_WIDTH)
@@ -147,7 +154,8 @@ class OrdersDashboard(QWidget):
         block.setVerticalSpacing(10)
         block.addWidget(self.automatic_link_button, 0, 0)
         block.addWidget(self.manual_link_button, 0, 1)
-        block.addWidget(self.build_order_button, 1, 0, 1, 2)
+        block.addWidget(self.review_button, 1, 0, 1, 2)
+        block.addWidget(self.build_order_button, 2, 0, 1, 2)
         block_row = QHBoxLayout()
         block_row.addStretch()
         block_row.addWidget(self.action_block)
@@ -187,6 +195,8 @@ class OrdersDashboard(QWidget):
         self.manual_link_button.setEnabled(metrics.unlinked_count > 0)
         ready = can_build_print_plan(orders)
         has_linked = metrics.linked_count > 0
+        self.review_button.setVisible(has_orders)
+        self.review_button.setEnabled(has_linked)
         self.build_order_button.setEnabled(has_linked)
         if ready:
             self.build_hint.setText("✓ TODOS OS PRODUTOS VINCULADOS")

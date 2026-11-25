@@ -31,6 +31,9 @@ class ParserTests(unittest.TestCase):
             "Kit Preto, GG - GG": ("preto", ("gg", "gg")),
             "Marrom - Estampa Preta,P - G": ("marrom", ("p", "g")),
             "  Preta  ,  G ": ("preta", ("g",)),
+            "Marrom,Camiseta P": ("marrom", ("p",)),
+            "Marrom,Camiseta GG": ("marrom", ("gg",)),
+            "Camiseta M,Preta": ("preta", ("m",)),
         }
         for text, (color, sizes) in cases.items():
             with self.subTest(text):
